@@ -1,0 +1,90 @@
+# This file lives at the workspace root (not inside
+# esp32-lilygo-t-display-s3-firmware/) because esp-idf-sys only reads one
+# sdkconfig/root-crate config per workspace -- it can't be set per member
+# crate. Fine with a single board; a second board crate with different
+# sdkconfig needs will require per-build overrides (e.g. the
+# ESP_IDF_SDKCONFIG_DEFAULTS/MCU env vars) rather than a second file here.
+#
+# BIP39 seed derivation (PBKDF2-HMAC-SHA512, 2048 rounds) runs entirely on
+# the main task with no scheduler yield, taking ~25s in pure software
+# (no hardware SHA acceleration -- see project-summary.md "Known issue").
+# That's long enough to trip the default 5s idle-task watchdog. Extended
+# here rather than papering over it with a yield inside the crypto code,
+# since crypto-core stays platform-agnostic (no ESP-IDF calls in its
+# default, non-`hw-sha512` path).
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=60
+
+# The reboot after "identity pubkey" turned out to be a DIFFERENT,
+# lower-level watchdog than the one above: the Interrupt Watchdog
+# (hardware Timer Group 1, reset reason "TG1WDT_SYS_RST"), which trips if
+# something appears to block interrupt servicing for too long. Default is
+# 300ms. Bumped generously while we confirm this is actually the relevant
+# knob for the post-derivation hang.
+CONFIG_ESP_INT_WDT_TIMEOUT_MS=10000
+
+# Default main task stack (3584 bytes) is small for a call chain through
+# BIP32/k256 elliptic-curve math plus PBKDF2-HMAC-SHA512 -- suspected
+# cause of a memory-corruption crash seen consistently after long compute
+# stretches (manifests as a corrupted-looking mutex in an unrelated
+# subsystem, e.g. logging -- a classic stack-overflow-into-adjacent-memory
+# symptom). See project-summary.md "Known issue" for the full trail.
+# Tried dropping this to 65536 on the theory that `hw-sha512` (routes
+# PBKDF2's inner HMAC-SHA512 through ESP-IDF's mbedtls hardware
+# accelerator) had cut the real stack depth this needs -- wrong: real
+# hardware hit the *exact* original failure signature again
+# (`assert failed: xQueueSemaphoreTake queue.c:1713 (pxQueue->uxItemSize
+# == 0)`, a corrupted-queue assertion in an unrelated subsystem -- the
+# same "stack overflow corrupting adjacent memory" fingerprint as the
+# original bug, just a different victim structure this time), and it hit
+# during the FROST/ECDSA self-test's elliptic-curve math specifically --
+# which runs on *every* boot, not just onboarding's BIP32/PBKDF2, so this
+# task's real depth requirement isn't unique to the path `hw-sha512`
+# sped up. Reverted to the original, real-hardware-confirmed-safe 131072.
+# The BLE connection memory bottleneck (see
+# CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE's comment) gets its headroom from
+# `main.rs`'s BLE thread stack instead -- see that stack_size call's own
+# comment.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=131072
+
+# BLE GATT server via the `esp32-nimble` crate (NimBLE host), not
+# esp-idf-svc's Bluedroid `bt::ble::gatt` module -- Bluedroid advertising
+# was deterministically rejected by the controller on this chip/IDF
+# version ("Cmd Disallowed" on every start_advertising() HCI call, root
+# cause never found -- see project-summary.md "Known issue"). NimBLE is
+# also ESP-IDF's own recommended host stack for BLE-only chips like the
+# S3 (Bluedroid's Kconfig help text explicitly says it's for classic/
+# dual-mode use). NIMBLE_NVS_PERSIST keeps bonds (from the passkey
+# pairing in ble.rs) across reboots -- without it every boot would need
+# re-pairing.
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_BT_BLUEDROID_ENABLED=n
+CONFIG_BT_NIMBLE_NVS_PERSIST=y
+
+# Default NimBLE host task stack (4096 bytes) overflowed the moment real
+# GATT traffic started flowing after pairing ("A stack overflow in task
+# nimble_host has been detected", right after the MTU-update event) --
+# `esp32-nimble`'s characteristic/server callbacks (`on_write`, `on_mtu`,
+# etc.) run synchronously ON this task's own stack, and ours calls straight
+# into `handle_request`. Originally bumped to 16384 to cover FROST/curve
+# math running inline there -- but `handle_request` now defers every such
+# computation to the main thread (`DeferredRequest`/`run_deferred`, see
+# ble.rs), so this task's own stack usage today is just postcard decode +
+# immediate dispatch, plus two trivial precomputed-bytes returns
+# (GetIdentityPublicKey/GetDepositPublicKey). Dropped back down now that
+# real internal RAM headroom matters more than this task specifically --
+# a real BLE connection's own persistent overhead (GATT tables, bonding/
+# security state, MTU-256 buffers) turned out to eat ~25KB on its own,
+# tight enough that a legitimate ~20.7KB allocation during claim/send
+# failed outright ("memory allocation of 20712 bytes failed") with the
+# previous 16384 value. Tried 8192, then 12288 -- both still overflowed,
+# and *earlier* than before: right at MTU negotiation itself, before any
+# request even reaches `on_write`. That's NimBLE's own internal MTU/ATT
+# renegotiation handling, not our dispatch code -- apparently it needs
+# real stack depth too, somewhere in (12288, 16384]. Back to 16384 (the
+# last confirmed-safe-against-overflow value across many real test runs)
+# -- the OOM headroom this was chasing comes from `main.rs`'s BLE thread
+# stack instead now (see that stack_size call's own comment), since
+# CONFIG_ESP_MAIN_TASK_STACK_SIZE turned out not to have the slack it
+# looked like it had (see that setting's own comment).
+CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE=16384

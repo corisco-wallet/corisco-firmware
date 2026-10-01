@@ -1,0 +1,55 @@
+[workspace]
+resolver = "2"
+members = ["firmware-core", "esp32-lilygo-t-display-s3-firmware"]
+
+[workspace.dependencies]
+# Signing logic, validated separately on the host: https://github.com/corisco-wallet/crypto-core
+#
+# TODO(publish): this is a path dependency for local development, since
+# crypto-core lives in a sibling checkout during this repo's initial setup.
+# Once crypto-core is pushed, replace with:
+#   signer-core = { git = "https://github.com/corisco-wallet/crypto-core", rev = "<pinned-commit>" }
+signer-core = { path = "../crypto-core" }
+
+esp-idf-svc = "0.52"
+esp-idf-hal = "0.46"
+esp-idf-sys = "0.37"
+log = "0.4"
+
+# BLE RPC framing (small, embedded-friendly serde format).
+postcard = { version = "1", features = ["alloc"] }
+serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
+
+hex = "0.4"
+sha2 = "0.10"
+anyhow = "1"
+enumset = "1"
+heapless = "0.8"
+
+# For the on-device FROST self-test only: simulates a Signing-Operator group
+# locally to exercise signer-core::frost's round1/round2 against real
+# elliptic-curve math on real hardware. Pinned to the same commit as
+# crypto-core's own dependency.
+frost-secp256k1-tr = { git = "https://github.com/lightsparkdev/frost", rev = "997427e5c09e62459230ad711ef3a33fb64b9424" }
+frost-core = { git = "https://github.com/lightsparkdev/frost", rev = "997427e5c09e62459230ad711ef3a33fb64b9424" }
+rand_core = "0.6"
+
+# CST816S touch controller driver (embedded-hal 1.0, which esp-idf-hal's
+# I2cDriver/PinDriver implement directly).
+cst816s = "1.0.1"
+
+# UI toolkit. Defined once here so firmware-core's platform glue and each
+# board crate's generated UI code are guaranteed to use the exact same
+# slint feature set -- they share concrete slint types (MinimalSoftwareWindow,
+# the generated AppWindow, etc.) across the crate boundary, so a feature
+# mismatch between the two would be a hard-to-diagnose type/ABI mismatch,
+# not just a version warning.
+slint = { version = "1", default-features = false }
+
+# BLE. Not esp-idf-svc's Bluedroid `bt::ble` module -- see firmware-core's
+# ble.rs doc comment for why (NimBLE is ESP-IDF's own recommended stack for
+# BLE-only chips).
+esp32-nimble = "0.12"
+
+[profile.release]
+opt-level = 3
