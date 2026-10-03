@@ -63,8 +63,41 @@ that path dependency is currently resolved.
 cargo run --release
 ```
 
-(`.cargo/config.toml`'s `runner` is set to `espflash flash --monitor`, so
-`cargo run` builds, flashes, and opens a serial monitor in one step.)
+`.cargo/config.toml`'s `runner` is set to `espflash flash --monitor`, so
+this one command builds, flashes, and opens a serial monitor on the
+device's boot log, in that order, in a single `espflash` process. This
+needs a real interactive terminal (the monitor reads your keystrokes for
+`Ctrl+R`/`Ctrl+C`) -- it won't work piped through something non-interactive
+(SSH without a TTY, a CI job, an agent's sandboxed shell).
+
+If you're in a non-interactive context, or you just don't want the monitor
+to block: build and flash as two separate steps instead, which skips the
+monitor entirely:
+
+```bash
+cargo build --release
+espflash flash --port /dev/ttyACM0 \
+  target/xtensa-esp32s3-espidf/release/esp32-lilygo-t-display-s3-firmware
+```
+
+(`espflash board-info` will print the right `--port` if you're not sure
+which device node it is; omit `--port` entirely if only one serial device
+is connected and espflash can pick it for you.) To look at the boot log
+afterward, watch it as its own step, started *before* you reset the
+device, not concurrently with another command touching the same port --
+having two processes toggle the port's DTR/RTS lines against each other at
+the same time is how you accidentally land the chip back in the ROM
+bootloader ("waiting for download") instead of a normal boot:
+
+```bash
+espflash monitor --port /dev/ttyACM0    # start this first
+espflash reset --port /dev/ttyACM0      # then, from another shell, reset
+```
+
+On Linux, if flashing fails with a permissions error on the port, you're
+probably not in the group that owns it (commonly `dialout` or `uucp`):
+`groups` to check, `sudo usermod -aG dialout $USER` (then log out/in) to
+fix it.
 
 ## First boot
 
