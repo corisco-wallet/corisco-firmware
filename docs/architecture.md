@@ -3,8 +3,9 @@
 This walks through how a payment actually moves through the system end to
 end -- what the phone app does, what crosses BLE, and what the ESP32
 signer does with it. For building/running the app, see
-`corisco-android-app/README.md` and
-`esp32-lilygo-t-display-s3-firmware/README.md`.
+the [corisco-android-app repo](https://github.com/corisco-wallet/corisco-android-app)
+and `esp32-lilygo-t-display-s3-firmware/README.md`. Paths under
+`corisco-android-app/` below refer to that repo.
 
 ## Overview
 
@@ -12,7 +13,7 @@ Three components, one hard invariant:
 
 ```mermaid
 flowchart LR
-    subgraph Phone["Corisco app (corisco-android-app/)"]
+    subgraph Phone["Corisco app (corisco-android-app repo)"]
         SDK["Spark SDK\n(SparkWallet)"]
         Signer["BleHardwareSigner"]
         SDK <--> Signer
