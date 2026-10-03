@@ -62,6 +62,19 @@ and commit the regenerated file. CI also compares it with the latest
 release's vectors: appending is fine, but changing or removing an existing
 case fails unless `PROTOCOL_VERSION` is bumped (use a `feat!:` commit).
 
+## Releases
+
+Firmware releases are automated by [release-plz](https://release-plz.dev)
+from [Conventional Commits](https://www.conventionalcommits.org/). On each
+push to `main` it opens/updates a release PR (version bump +
+`CHANGELOG.md`); merging it tags `vX.Y.Z`, creates the GitHub Release, and
+attaches `corisco-firmware.bin` and `protocol/vectors.json`. The mobile app
+pins a firmware release and tests against that release's vectors.
+
+Needs the repo secret `RELEASE_PLZ_TOKEN` (a fine-grained PAT with
+contents, pull-requests and workflows write access) so the release PR and
+tags trigger CI.
+
 ## Coding conventions
 
 - Comments should explain *why*, not *what* -- if a comment just restates

@@ -1,0 +1,26 @@
+[workspace]
+# Firmware is flashed from GitHub Release assets, never published to crates.io.
+publish = false
+# release-plz's semver check builds the crate; it can't build for Xtensa.
+semver_check = false
+changelog_update = true
+git_release_enable = true
+
+# One firmware release = one version = one tag. The library crates are
+# versioned implicitly by the firmware release that contains them.
+[[package]]
+name = "esp32-lilygo-t-display-s3-firmware"
+git_tag_name = "v{{ version }}"
+git_release_name = "Firmware v{{ version }}"
+changelog_path = "CHANGELOG.md"
+# Commits touching these crates belong in the firmware's changelog and
+# count towards its version bump.
+changelog_include = ["firmware-core", "corisco-protocol"]
+
+[[package]]
+name = "firmware-core"
+release = false
+
+[[package]]
+name = "corisco-protocol"
+release = false
