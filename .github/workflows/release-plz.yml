@@ -79,14 +79,20 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: espflash
-      # Named <board crate>-<tag>.bin so the file says which board and
-      # version it is for, and a second board can't collide with it.
+      # Named <board crate>-<tag>[-app].bin so the file says which board
+      # and version it is for, and a second board can't collide with it.
+      #   <name>.bin     full 4 MiB flash image (bootloader, partition
+      #                  table, app): for a blank board only. Written at
+      #                  0x0 it also blanks NVS (seed, PIN counter, bond).
+      #   <name>-app.bin app image only: write at 0x10000 to update a
+      #                  device without touching NVS.
       - name: build and package
         run: |
           cargo build --release
-          espflash save-image --chip esp32s3 --merge \
-            target/xtensa-esp32s3-espidf/release/esp32-lilygo-t-display-s3-firmware \
-            "esp32-lilygo-t-display-s3-firmware-${{ needs.release.outputs.tag || inputs.tag }}.bin"
+          elf=target/xtensa-esp32s3-espidf/release/esp32-lilygo-t-display-s3-firmware
+          name="esp32-lilygo-t-display-s3-firmware-${{ needs.release.outputs.tag || inputs.tag }}"
+          espflash save-image --chip esp32s3 --merge "$elf" "$name.bin"
+          espflash save-image --chip esp32s3 "$elf" "$name-app.bin"
       - uses: actions/upload-artifact@v4
         with:
           name: image

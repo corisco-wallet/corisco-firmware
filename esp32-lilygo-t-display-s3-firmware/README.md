@@ -99,6 +99,33 @@ probably not in the group that owns it (commonly `dialout` or `uucp`):
 `groups` to check, `sudo usermod -aG dialout $USER` (then log out/in) to
 fix it.
 
+## Flashing a released image
+
+Each [GitHub Release](https://github.com/corisco-wallet/corisco-wallet/releases)
+has two images (replace `vX.Y.Z`):
+
+| File | For | Flash command |
+|---|---|---|
+| `esp32-lilygo-t-display-s3-firmware-vX.Y.Z-app.bin` | **updating a device that already has a wallet** | `espflash write-bin 0x10000 <file>` |
+| `esp32-lilygo-t-display-s3-firmware-vX.Y.Z.bin` | a **blank** board (first flash) | `espflash write-bin 0x0 <file>` |
+
+Use the `-app.bin` for updates. The full image is a 4 MiB copy of the whole
+flash and contains an empty NVS partition, so writing it erases the
+PIN-encrypted seed, the PIN-attempt counter and the BLE bond; you would have
+to restore the seed and re-pair. (`cargo run --release` / `espflash flash`
+from source only writes the bootloader, partition table and app, so it
+doesn't have this problem.)
+
+```bash
+gh release download vX.Y.Z -R corisco-wallet/corisco-wallet -p '*-app.bin'
+espflash write-bin 0x10000 esp32-lilygo-t-display-s3-firmware-vX.Y.Z-app.bin
+espflash reset
+```
+
+The app image assumes the partition table already on the device (NVS at
+`0x9000`, app at `0x10000`). If a release ever changes the partition layout,
+its notes will say to use the full image.
+
 ## First boot
 
 A freshly flashed device starts at the Welcome screen: create a new

@@ -65,7 +65,7 @@ Firmware releases are automated by [release-plz](https://release-plz.dev)
 from [Conventional Commits](https://www.conventionalcommits.org/). On each
 push to `main` it opens/updates a release PR (version bump +
 `CHANGELOG.md`); merging it tags `vX.Y.Z`, creates the GitHub Release, and
-attaches `esp32-lilygo-t-display-s3-firmware-vX.Y.Z.bin` and `protocol/vectors.json`. The mobile app
+attaches the full flash image `esp32-lilygo-t-display-s3-firmware-vX.Y.Z.bin`, the app-only image `...-vX.Y.Z-app.bin` and `protocol/vectors.json`. The mobile app
 pins a firmware release and tests against that release's vectors.
 
 Needs the repo secret `RELEASE_PLZ_TOKEN` (a fine-grained PAT with
