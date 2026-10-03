@@ -1,0 +1,33 @@
+{
+  "name": "corisco-android-app",
+  "version": "1.0.0",
+  "main": "index.ts",
+  "dependencies": {
+    "@buildonspark/spark-sdk": "^0.9.0",
+    "@react-native-async-storage/async-storage": "2.2.0",
+    "eas-cli": "^22.2.0",
+    "expo": "~57.0.15",
+    "expo-camera": "~57.0.4",
+    "expo-clipboard": "~57.0.1",
+    "expo-dev-client": "~57.0.14",
+    "expo-status-bar": "~57.0.1",
+    "light-bolt11-decoder": "3.2.0",
+    "react": "19.2.3",
+    "react-native": "0.86.2",
+    "react-native-ble-plx": "^3.5.1",
+    "react-native-get-random-values": "~1.11.0",
+    "react-native-qrcode-svg": "^6.3.21",
+    "react-native-svg": "15.15.4"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.2",
+    "typescript": "~6.0.3"
+  },
+  "scripts": {
+    "start": "expo start",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "web": "expo start --web"
+  },
+  "private": true
+}

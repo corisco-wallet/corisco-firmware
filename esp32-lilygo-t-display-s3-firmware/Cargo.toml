@@ -1,0 +1,59 @@
+[package]
+name = "esp32-lilygo-t-display-s3-firmware"
+version = "0.1.0"
+edition = "2021"
+resolver = "2"
+rust-version = "1.77"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+# Board-agnostic BLE protocol, seed storage, RNG, and Slint platform glue --
+# see ../firmware-core/README.md for what lives there vs. here.
+firmware-core = { path = "../firmware-core" }
+
+# Used directly here too (onboarding/unlock in ui/mod.rs, identity key
+# derivation + the boot-time test signature in main.rs), not just via
+# firmware-core.
+corisco-crypto-core = { workspace = true, features = ["seed-lock", "hw-sha512", "transfer-crypto"] }
+
+esp-idf-svc = { workspace = true, features = ["critical-section"] }
+esp-idf-hal = { workspace = true }
+esp-idf-sys = { workspace = true, features = ["binstart"] }
+log = { workspace = true }
+
+hex = { workspace = true }
+sha2 = { workspace = true }
+anyhow = { workspace = true }
+
+# CST816S touch controller driver (embedded-hal 1.0, which esp-idf-hal's
+# I2cDriver/PinDriver implement directly -- see touch.rs).
+cst816s = { workspace = true }
+
+# UI toolkit. `renderer-software` since there's no GPU here. Deliberately
+# NOT slint's own "std" feature, even though
+# this crate/project is std -- slint's "std" unconditionally cascades into
+# "systemfonts" (desktop font discovery via `fontique`/`parley`), which
+# pulls in `memmap2`, which fails to build here: this target's libc (a
+# minimal newlib port via ESP-IDF, not a real OS) has no mmap/mprotect/
+# madvise. "renderer-software" alone (without "std") avoids that whole
+# subtree -- matches how Slint's own MCU examples build (no_std +
+# renderer-software), even though this project is std everywhere else.
+# "unsafe-single-threaded" is required without slint's "std" feature (its
+# internal thread-local GLOBAL_CONTEXT otherwise has no implementation at
+# all -- std::thread_local vs this are the only two options upstream).
+# Sound here specifically because exactly one thread ever touches Slint
+# state (the main/UI thread); the BLE thread only ever communicates with
+# it over an mpsc channel. Must match firmware-core's slint feature set
+# exactly -- see the workspace Cargo.toml's comment on why.
+slint = { workspace = true, features = ["renderer-software", "libm", "unsafe-single-threaded", "compat-1-2"] }
+
+[build-dependencies]
+embuild = "0.33"
+slint-build = "1"
+
+# [profile.release] lives in the workspace root Cargo.toml -- Cargo only
+# honors profile tables there, not per-member.
+
+[[bin]]
+name = "esp32-lilygo-t-display-s3-firmware"
+harness = false

@@ -1,0 +1,49 @@
+name: firmware
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "firmware-core/**"
+      - "esp32-lilygo-t-display-s3-firmware/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".cargo/**"
+      - "sdkconfig.defaults"
+      - "rust-toolchain.toml"
+      - ".github/workflows/firmware.yml"
+  pull_request:
+    paths:
+      - "firmware-core/**"
+      - "esp32-lilygo-t-display-s3-firmware/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".cargo/**"
+      - "sdkconfig.defaults"
+      - "rust-toolchain.toml"
+      - ".github/workflows/firmware.yml"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # espressif/idf-rust ships a full espup-installed Xtensa Rust toolchain
+    # + ESP-IDF, so this container has everything `cargo build --release`
+    # needs with no espup/export-esp.sh setup step of its own. Tag is keyed
+    # by Rust toolchain release, not ESP-IDF version -- if this ever drifts
+    # from .cargo/config.toml's pinned `ESP_IDF_VERSION`, pin to a specific
+    # dated tag instead of `_latest` (see Docker Hub:
+    # https://hub.docker.com/r/espressif/idf-rust/tags).
+    container: espressif/idf-rust:esp32s3_latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            target
+          key: firmware-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: firmware-${{ runner.os }}-
+      - name: build
+        run: |
+          . /root/export-esp.sh
+          cargo build --release

@@ -1,0 +1,26 @@
+[build]
+target = "xtensa-esp32s3-espidf"
+
+[target.xtensa-esp32s3-espidf]
+linker = "ldproxy"
+runner = "espflash flash --monitor"
+rustflags = ["--cfg", "espidf_time64"]
+
+[unstable]
+build-std = ["std", "panic_abort"]
+
+[env]
+MCU = "esp32s3"
+ESP_IDF_VERSION = "v5.5.3"
+# Needed once `slint-macros` (a proc-macro, from the `slint` dependency)
+# entered the graph: proc-macros build for the host target alongside the
+# real xtensa one, and esp-idf-sys's build script can no longer
+# auto-detect which crate is "the" root binary once there are two build
+# units in this workspace -- see esp-rs/esp-idf-sys#279. Now that this is
+# also a real Cargo workspace (firmware-core + the board crate), this is
+# doing double duty: it's the same fix, just pointed at the one crate here
+# that's actually a binary.
+ESP_IDF_SYS_ROOT_CRATE = "esp32-lilygo-t-display-s3-firmware"
+# Set after `espup install` sources export-esp.sh; left here as a reminder,
+# not a hardcoded path -- espup writes the real one into your shell env.
+# LIBCLANG_PATH = "$HOME/.espup/esp-clang"
