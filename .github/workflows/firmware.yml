@@ -66,7 +66,11 @@ jobs:
     # from .cargo/config.toml's pinned `ESP_IDF_VERSION`, pin to a specific
     # dated tag instead of `_latest` (see Docker Hub:
     # https://hub.docker.com/r/espressif/idf-rust/tags).
-    container: espressif/idf-rust:esp32s3_latest
+    container:
+      image: espressif/idf-rust:esp32s3_latest
+      # The image's default user can't write the runner's temp dir, which
+      # makes actions/checkout fail with EACCES.
+      options: --user root
     steps:
       - uses: actions/checkout@v4
       - uses: actions/cache@v4

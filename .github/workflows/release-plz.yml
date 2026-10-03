@@ -3,6 +3,12 @@ name: release-plz
 on:
   push:
     branches: [main]
+  # Re-attach assets to an existing release (e.g. after a failed build).
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build and attach assets to"
+        required: true
 
 permissions:
   contents: write
@@ -17,6 +23,7 @@ jobs:
   # Tags + GitHub Release for a firmware version that isn't tagged yet.
   release:
     runs-on: ubuntu-latest
+    if: github.event_name == 'push'
     outputs:
       releases_created: ${{ steps.release-plz.outputs.releases_created }}
       tag: ${{ fromJSON(steps.release-plz.outputs.releases || '[{}]')[0].tag }}
@@ -38,6 +45,7 @@ jobs:
   # Opens/updates the release PR (version bump + CHANGELOG.md) from
   # conventional commits. Merging it triggers the job above.
   release-pr:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     concurrency:
       group: release-plz-${{ github.ref }}
@@ -57,15 +65,19 @@ jobs:
   # Build the flashable image at the release tag.
   build-image:
     needs: release
-    if: needs.release.outputs.releases_created == 'true'
+    if: always() && (needs.release.outputs.releases_created == 'true' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
-    container: espressif/idf-rust:esp32s3_latest
+    container:
+      image: espressif/idf-rust:esp32s3_latest
+      # The image's default user can't write the runner's temp dir, which
+      # makes actions/checkout fail with EACCES.
+      options: --user root
     env:
       RUSTUP_TOOLCHAIN: esp
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.release.outputs.tag }}
+          ref: ${{ needs.release.outputs.tag || inputs.tag }}
       - name: build and package
         run: |
           . /root/export-esp.sh
@@ -83,11 +95,12 @@ jobs:
   # and tests against) to the GitHub Release.
   upload-assets:
     needs: [release, build-image]
+    if: always() && needs.build-image.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.release.outputs.tag }}
+          ref: ${{ needs.release.outputs.tag || inputs.tag }}
       - uses: actions/download-artifact@v4
         with:
           name: image
@@ -95,5 +108,5 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
         run: |
-          gh release upload "${{ needs.release.outputs.tag }}" \
+          gh release upload "${{ needs.release.outputs.tag || inputs.tag }}" \
             corisco-firmware.bin protocol/vectors.json --clobber
