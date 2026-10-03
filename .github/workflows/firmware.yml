@@ -70,7 +70,10 @@ jobs:
             ~/.cargo/registry
             target
             .embuild
-          key: firmware-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: firmware-${{ runner.os }}-
+          # The cached target/ and .embuild/ (CMake caches) contain absolute
+          # paths, so the key must change if the checkout path does (it did
+          # when the repo was renamed). Bump the version to force a fresh build.
+          key: firmware-v2-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: firmware-v2-${{ runner.os }}-
       - name: build
         run: cargo build --release
