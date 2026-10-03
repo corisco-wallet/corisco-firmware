@@ -40,7 +40,7 @@ Targets the [LilyGo T-Display-S3](https://github.com/Xinyuan-LilyGO/T-Display-S3
 ## Building
 
 This crate is a member of the Cargo workspace rooted at the repo root
-(`corisco-wallet/Cargo.toml`), alongside `firmware-core`. Build from either
+(the root `Cargo.toml`), alongside `firmware-core`. Build from either
 directory -- Cargo finds the workspace root automatically:
 
 ```bash
@@ -101,7 +101,7 @@ fix it.
 
 ## Flashing a released image
 
-Each [GitHub Release](https://github.com/corisco-wallet/corisco-wallet/releases)
+Each [GitHub Release](https://github.com/corisco-wallet/corisco-firmware/releases)
 has two images (replace `vX.Y.Z`):
 
 | File | For | Flash command |
@@ -117,7 +117,7 @@ from source only writes the bootloader, partition table and app, so it
 doesn't have this problem.)
 
 ```bash
-gh release download vX.Y.Z -R corisco-wallet/corisco-wallet -p '*-app.bin'
+gh release download vX.Y.Z -R corisco-wallet/corisco-firmware -p '*-app.bin'
 espflash write-bin 0x10000 esp32-lilygo-t-display-s3-firmware-vX.Y.Z-app.bin
 espflash reset
 ```

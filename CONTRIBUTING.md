@@ -1,4 +1,4 @@
-# Contributing to corisco-wallet
+# Contributing to corisco-firmware
 
 Thanks for considering a contribution. This repo is the device firmware. The
 mobile app ([corisco-android-app](https://github.com/corisco-wallet/corisco-android-app)) lives in its own repo and

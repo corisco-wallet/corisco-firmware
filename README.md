@@ -1,4 +1,4 @@
-# corisco-wallet
+# corisco-firmware
 
 A self-custodial Lightning wallet where the private keys never touch your
 phone: a small ESP32-S3 hardware device holds the keys and signs every
