@@ -4,12 +4,11 @@ members = ["firmware-core", "esp32-lilygo-t-display-s3-firmware"]
 
 [workspace.dependencies]
 # Signing logic, validated separately on the host: https://github.com/corisco-wallet/crypto-core
-#
-# TODO(publish): this is a path dependency for local development, since
-# crypto-core lives in a sibling checkout during this repo's initial setup.
-# Once crypto-core is pushed, replace with:
-#   signer-core = { git = "https://github.com/corisco-wallet/crypto-core", rev = "<pinned-commit>" }
-signer-core = { path = "../crypto-core" }
+# Pinned by release tag (Cargo.lock records the exact commit). Its own
+# frost-secp256k1-tr / frost-core `rev` below must match the ones used here.
+# To develop against a local checkout, see "Developing against a local
+# crypto-core" in CONTRIBUTING.md.
+corisco-crypto-core = { git = "https://github.com/corisco-wallet/crypto-core", tag = "v0.1.0" }
 
 esp-idf-svc = "0.52"
 esp-idf-hal = "0.46"
@@ -27,7 +26,7 @@ enumset = "1"
 heapless = "0.8"
 
 # For the on-device FROST self-test only: simulates a Signing-Operator group
-# locally to exercise signer-core::frost's round1/round2 against real
+# locally to exercise corisco-crypto-core::frost's round1/round2 against real
 # elliptic-curve math on real hardware. Pinned to the same commit as
 # crypto-core's own dependency.
 frost-secp256k1-tr = { git = "https://github.com/lightsparkdev/frost", rev = "997427e5c09e62459230ad711ef3a33fb64b9424" }

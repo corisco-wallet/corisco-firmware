@@ -1,4 +1,4 @@
-//! Boot-time crypto self-tests. Board-agnostic: exercises `signer-core`
+//! Boot-time crypto self-tests. Board-agnostic: exercises `corisco-crypto-core`
 //! against real hardware (timing, actual elliptic-curve math) without
 //! touching display/touch/BLE, so every board crate can call these from its
 //! own `main()` the same way.
@@ -30,7 +30,7 @@ pub fn bench_sha512_single_block() {
     );
 }
 
-/// Exercises `signer_core::frost`'s round1/round2 against real
+/// Exercises `corisco_crypto_core::frost`'s round1/round2 against real
 /// elliptic-curve math on real hardware, end to end: simulates a 3-of-5
 /// Signing-Operator group locally (standing in for the real network, which
 /// doesn't exist yet), signs with a real derived LEAF key exactly as
@@ -38,7 +38,7 @@ pub fn bench_sha512_single_block() {
 /// verifies the resulting signature. Mirrors `crypto-core`'s
 /// `user_signature_share_aggregates_into_valid_signature` host test, but
 /// running (and timed) on the actual target chip.
-pub fn frost_self_test(roots: &signer_core::SparkKeyRoots) -> anyhow::Result<()> {
+pub fn frost_self_test(roots: &corisco_crypto_core::SparkKeyRoots) -> anyhow::Result<()> {
     use frost_secp256k1_tr::{
         aggregate_with_tweak,
         keys::{generate_with_dealer, EvenY, IdentifierList, KeyPackage as FrostKeyPackage, PublicKeyPackage, Tweak},
@@ -80,14 +80,14 @@ pub fn frost_self_test(roots: &signer_core::SparkKeyRoots) -> anyhow::Result<()>
     // --- Round 1 ---
     let se_signers: Vec<Identifier> = se_key_packages.keys().take(3).cloned().collect();
     let mut se_nonces = BTreeMap::new();
-    let mut se_commitments: BTreeMap<Identifier, signer_core::frost::SigningCommitments> = BTreeMap::new();
+    let mut se_commitments: BTreeMap<Identifier, corisco_crypto_core::frost::SigningCommitments> = BTreeMap::new();
     for id in &se_signers {
         let kp = &se_key_packages[id];
         let (nonce, commitment) = round1::commit(kp.signing_share(), &mut rng);
         se_nonces.insert(*id, nonce);
         se_commitments.insert(*id, commitment);
     }
-    let (device_nonce, device_commitment) = signer_core::frost::frost_commit(&leaf_key)?;
+    let (device_nonce, device_commitment) = corisco_crypto_core::frost::frost_commit(&leaf_key)?;
 
     let t1 = unsafe { esp_idf_svc::sys::esp_timer_get_time() };
 
@@ -95,12 +95,12 @@ pub fn frost_self_test(roots: &signer_core::SparkKeyRoots) -> anyhow::Result<()>
     let signing_package = SigningPackage::new_with_adaptor(
         {
             let mut c = se_commitments.clone();
-            c.insert(signer_core::frost::user_identifier(), device_commitment);
+            c.insert(corisco_crypto_core::frost::user_identifier(), device_commitment);
             c
         },
         Some(vec![
             se_commitments.keys().cloned().collect(),
-            BTreeSet::from([signer_core::frost::user_identifier()]),
+            BTreeSet::from([corisco_crypto_core::frost::user_identifier()]),
         ]),
         message,
         None,
@@ -119,7 +119,7 @@ pub fn frost_self_test(roots: &signer_core::SparkKeyRoots) -> anyhow::Result<()>
         all_shares.insert(*id, round2::sign(&signing_package, &se_nonces[id], &kp)?);
     }
 
-    let device_share_bytes = signer_core::frost::frost_sign(
+    let device_share_bytes = corisco_crypto_core::frost::frost_sign(
         message,
         &leaf_key,
         &device_nonce,
@@ -132,7 +132,7 @@ pub fn frost_self_test(roots: &signer_core::SparkKeyRoots) -> anyhow::Result<()>
     let t2 = unsafe { esp_idf_svc::sys::esp_timer_get_time() };
 
     all_shares.insert(
-        signer_core::frost::user_identifier(),
+        corisco_crypto_core::frost::user_identifier(),
         round2::SignatureShare::deserialize(&device_share_bytes)?,
     );
 
@@ -144,7 +144,7 @@ pub fn frost_self_test(roots: &signer_core::SparkKeyRoots) -> anyhow::Result<()>
         .collect();
     let device_signing_share = frost_secp256k1_tr::keys::SigningShare::deserialize(&leaf_key)?;
     verifying_shares.insert(
-        signer_core::frost::user_identifier(),
+        corisco_crypto_core::frost::user_identifier(),
         frost_secp256k1_tr::keys::VerifyingShare::from(device_signing_share),
     );
     let public_package = PublicKeyPackage::new(verifying_shares, combined_vk, None);

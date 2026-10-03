@@ -59,8 +59,8 @@ use esp32_nimble::{enums::*, BLEAdvertisementData, BLECharacteristic, BLEDevice,
 use frost_secp256k1_tr::Identifier;
 use log::info;
 use serde::{Deserialize, Serialize};
-use signer_core::frost::{NonceCommitment, SigningCommitments, SigningNonces};
-use signer_core::SparkKeyRoots;
+use corisco_crypto_core::frost::{NonceCommitment, SigningCommitments, SigningNonces};
+use corisco_crypto_core::SparkKeyRoots;
 
 // Randomly generated, not derived from anything -- just needs to be
 // distinct from any well-known service.
@@ -108,7 +108,7 @@ enum Request {
         statechain_commitments: Vec<StatechainCommitment>,
         verifying_key: Vec<u8>,
         /// Present for Lightning payments that need a leaf swap first -- see
-        /// `signer_core::frost::frost_sign`'s doc comment.
+        /// `corisco_crypto_core::frost::frost_sign`'s doc comment.
         adaptor_public_key: Option<Vec<u8>>,
         /// `false` for the refund-transaction signatures a claim needs
         /// (internal statechain protocol plumbing -- a safety mechanism
@@ -204,16 +204,16 @@ fn resolve_private_key(roots: &SparkKeyRoots, d: &KeyDerivationRef) -> Result<[u
             roots.static_deposit_private_key(*idx).map_err(|e| e.to_string())
         }
         KeyDerivationRef::Ecies { ciphertext } => {
-            let plaintext = signer_core::decrypt_ecies(ciphertext, &roots.identity.private_key)?;
+            let plaintext = corisco_crypto_core::decrypt_ecies(ciphertext, &roots.identity.private_key)?;
             plaintext
                 .try_into()
                 .map_err(|v: Vec<u8>| format!("decrypted ECIES payload was {} bytes, expected 32", v.len()))
         }
-        KeyDerivationRef::Random => Ok(signer_core::random_private_key()),
+        KeyDerivationRef::Random => Ok(corisco_crypto_core::random_private_key()),
     }
 }
 
-/// Wire format for `signer_core::vss::VerifiableSecretShare`.
+/// Wire format for `corisco_crypto_core::vss::VerifiableSecretShare`.
 #[derive(Serialize)]
 struct ShareWire {
     threshold: u32,
@@ -222,8 +222,8 @@ struct ShareWire {
     proofs: Vec<Vec<u8>>,
 }
 
-impl From<signer_core::vss::VerifiableSecretShare> for ShareWire {
-    fn from(vs: signer_core::vss::VerifiableSecretShare) -> Self {
+impl From<corisco_crypto_core::vss::VerifiableSecretShare> for ShareWire {
+    fn from(vs: corisco_crypto_core::vss::VerifiableSecretShare) -> Self {
         ShareWire {
             threshold: vs.share.threshold as u32,
             index: vs.share.index,
@@ -490,7 +490,7 @@ pub fn complete_sign(req: Box<SignConfirmationRequest>, accept: bool) {
     let response = if !accept {
         err("declined on device")
     } else {
-        match signer_core::frost::frost_sign(
+        match corisco_crypto_core::frost::frost_sign(
             &req.message,
             &req.leaf_key,
             &req.nonce,
@@ -553,7 +553,7 @@ pub enum DeferredRequest {
 pub fn run_deferred(req: DeferredRequest) {
     match req {
         DeferredRequest::Commit { signer, responder } => {
-            let response = match signer_core::frost::frost_commit(&signer.roots.identity.private_key) {
+            let response = match corisco_crypto_core::frost::frost_commit(&signer.roots.identity.private_key) {
                 Ok((nonce, commitment)) => {
                     match (commitment.hiding().serialize(), commitment.binding().serialize()) {
                         (Ok(hiding), Ok(binding)) => {
@@ -576,7 +576,7 @@ pub fn run_deferred(req: DeferredRequest) {
             responder.send(&response);
         }
         DeferredRequest::SignSchnorrIdentity { signer, message, responder } => {
-            let sig = signer_core::sign_schnorr(&signer.roots.identity.private_key, &message);
+            let sig = corisco_crypto_core::sign_schnorr(&signer.roots.identity.private_key, &message);
             responder.send(&Response::Signature { signature: sig.to_bytes().to_vec() });
         }
         DeferredRequest::SignEcdsaIdentity { signer, message, compact, responder } => {
@@ -589,7 +589,7 @@ pub fn run_deferred(req: DeferredRequest) {
             // `to_der()` needs no new dependency here.
             let response = match <[u8; 32]>::try_from(message.as_slice()) {
                 Ok(digest) => {
-                    let sig = signer_core::sign_ecdsa_prehashed(&signer.roots.identity.private_key, &digest);
+                    let sig = corisco_crypto_core::sign_ecdsa_prehashed(&signer.roots.identity.private_key, &digest);
                     let signature = if compact { sig.to_bytes().to_vec() } else { sig.to_der().to_bytes().to_vec() };
                     Response::Signature { signature }
                 }
@@ -600,8 +600,8 @@ pub fn run_deferred(req: DeferredRequest) {
         DeferredRequest::SubtractAndSplitSecretWithProofs { signer, first, second, threshold, num_shares, responder } => {
             let response = match (resolve_private_key(&signer.roots, &first), resolve_private_key(&signer.roots, &second)) {
                 (Ok(a), Ok(b)) => {
-                    let diff = signer_core::subtract_private_keys(&a, &b);
-                    match signer_core::vss::split_secret_with_proofs(&diff, threshold as usize, num_shares as usize) {
+                    let diff = corisco_crypto_core::subtract_private_keys(&a, &b);
+                    match corisco_crypto_core::vss::split_secret_with_proofs(&diff, threshold as usize, num_shares as usize) {
                         Ok(shares) => Response::Shares { shares: shares.into_iter().map(ShareWire::from).collect() },
                         Err(e) => err(e),
                     }
@@ -611,10 +611,10 @@ pub fn run_deferred(req: DeferredRequest) {
             responder.send(&response);
         }
         DeferredRequest::DecryptEciesToPublicKey { signer, ciphertext, responder } => {
-            let response = match signer_core::decrypt_ecies(&ciphertext, &signer.roots.identity.private_key) {
+            let response = match corisco_crypto_core::decrypt_ecies(&ciphertext, &signer.roots.identity.private_key) {
                 Ok(plaintext) => match <[u8; 32]>::try_from(plaintext.as_slice()) {
                     Ok(private_key) => {
-                        let public_key = signer_core::private_key_to_public_key_compressed(&private_key);
+                        let public_key = corisco_crypto_core::private_key_to_public_key_compressed(&private_key);
                         Response::PublicKey { public_key: public_key.to_vec() }
                     }
                     Err(_) => err(format!("decrypted ECIES payload was {} bytes, expected 32", plaintext.len())),
@@ -635,10 +635,10 @@ pub fn run_deferred(req: DeferredRequest) {
         } => {
             let response = match (resolve_private_key(&signer.roots, &first), resolve_private_key(&signer.roots, &second)) {
                 (Ok(a), Ok(b)) => {
-                    let diff = signer_core::subtract_private_keys(&a, &b);
-                    match signer_core::vss::split_secret_with_proofs(&diff, threshold as usize, num_shares as usize) {
+                    let diff = corisco_crypto_core::subtract_private_keys(&a, &b);
+                    match corisco_crypto_core::vss::split_secret_with_proofs(&diff, threshold as usize, num_shares as usize) {
                         Ok(shares) => match <[u8; 33]>::try_from(receiver_public_key.as_slice()) {
-                            Ok(receiver_public_key) => match signer_core::encrypt_ecies(&b, &receiver_public_key) {
+                            Ok(receiver_public_key) => match corisco_crypto_core::encrypt_ecies(&b, &receiver_public_key) {
                                 Ok(secret_cipher) => Response::SubtractSplitAndEncrypt {
                                     shares: shares.into_iter().map(ShareWire::from).collect(),
                                     secret_cipher,

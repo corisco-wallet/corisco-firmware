@@ -87,7 +87,7 @@ fn main() -> anyhow::Result<()> {
         );
         let result = match ui::run_onboarding_or_unlock(&w, display, touch, storage.clone(), already_provisioned) {
             Ok((ui, seed)) => {
-                let roots = signer_core::SparkKeyRoots::from_seed(&seed, 0)
+                let roots = corisco_crypto_core::SparkKeyRoots::from_seed(&seed, 0)
                     .expect("key derivation should not fail for this seed");
                 info!(
                     "ui: flow complete, identity pubkey: {}",
@@ -127,7 +127,7 @@ fn main() -> anyhow::Result<()> {
         let arr: [u8; 32] = d.into();
         arr
     };
-    let sig = signer_core::sign_ecdsa_prehashed(&roots.identity.private_key, &digest);
+    let sig = corisco_crypto_core::sign_ecdsa_prehashed(&roots.identity.private_key, &digest);
     info!("test signature: {}", hex::encode(sig.to_bytes()));
 
     selftest::frost_self_test(&roots).expect("FROST self-test should produce a valid signature");

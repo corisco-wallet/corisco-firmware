@@ -5,7 +5,7 @@
 
 use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvs, NvsDefault};
 use esp_idf_svc::sys::EspError;
-use signer_core::seed_lock::EncryptedSeed;
+use corisco_crypto_core::seed_lock::EncryptedSeed;
 
 const NAMESPACE: &str = "signer";
 const KEY_SEED_BLOB: &str = "seed_blob";

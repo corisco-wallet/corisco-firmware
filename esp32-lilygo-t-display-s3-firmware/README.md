@@ -52,7 +52,7 @@ the workspace has no `[profile.dev]` override, so a debug build compiles
 Slint's software renderer at `opt-level = 0`, which is noticeably too
 slow to use.
 
-`signer-core` (the signing logic) comes from
+`corisco-crypto-core` (the signing logic) comes from
 [crypto-core](https://github.com/corisco-wallet/crypto-core) -- see the
 workspace root `Cargo.toml`'s `[workspace.dependencies]` table for how
 that path dependency is currently resolved.

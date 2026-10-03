@@ -20,12 +20,27 @@ is expected to touch both sides in the same PR.
 ## Relationship to crypto-core
 
 The firmware's signing logic comes from a separate repo,
-[crypto-core](https://github.com/corisco-wallet/crypto-core), pinned at a
-specific commit/version in the workspace root `Cargo.toml`'s
+[crypto-core](https://github.com/corisco-wallet/crypto-core), pinned to a
+release tag in the workspace root `Cargo.toml`'s
 `[workspace.dependencies]` table. If your change needs a crypto-core
 update: open and merge that PR first, then bump the pin here in a
 follow-up PR. A crypto-core change isn't visible in this repo's CI until
 that pin is bumped.
+
+### Developing against a local crypto-core
+
+To test unreleased crypto-core changes without editing the committed
+manifest, put this in a gitignored `.cargo/patch.toml` and pass it with
+`--config`:
+
+```toml
+[patch."https://github.com/corisco-wallet/crypto-core"]
+corisco-crypto-core = { path = "../crypto-core" }
+```
+
+```bash
+cargo build --release --config .cargo/patch.toml
+```
 
 ## Wire protocol changes
 

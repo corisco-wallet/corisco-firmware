@@ -19,7 +19,7 @@ flowchart LR
     end
     subgraph Signer_HW["ESP32 signer (esp32-lilygo-t-display-s3-firmware/)"]
         BLE["firmware-core: ble.rs\nGATT service"]
-        Core["signer_core\nFROST / BIP32"]
+        Core["corisco_crypto_core\nFROST / BIP32"]
         Roots["SparkKeyRoots\n(private keys, RAM only)"]
         BLE <--> Core
         Core <--> Roots
@@ -33,7 +33,7 @@ flowchart LR
 The invariant: **private key material never leaves the ESP32.** The phone
 only ever holds derived *public* keys and, per signing operation, a
 signature share it forwards to the Spark network -- never a private key,
-never a seed. `signer_core::SparkKeyRoots` lives only in the device's RAM
+never a seed. `corisco_crypto_core::SparkKeyRoots` lives only in the device's RAM
 (itself unlocked from a PIN-encrypted blob on boot). The phone's
 `BleHardwareSigner` (`corisco-android-app/src/ble-hardware-signer.ts`) implements
 the SDK's `SparkSigner` interface entirely by asking the device over BLE
@@ -195,7 +195,7 @@ main thread drains into screen 4 of `app.slint`:
   "Confirm signature" / leaf id / a short fingerprint of the message
   being signed.
 - **Accept** -> `complete_sign(req, true)` runs the real
-  `signer_core::frost::frost_sign` and sends `Response::Sign` with the
+  `corisco_crypto_core::frost::frost_sign` and sends `Response::Sign` with the
   actual signature share.
 - **Decline** -> `complete_sign(req, false)` sends `Response::Error`
   ("declined on device") -- no signing call happens at all.

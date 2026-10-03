@@ -16,7 +16,7 @@
 //! Every real crypto call here (mnemonic/seed generation, PIN encrypt/
 //! decrypt, recovery-phrase validation) is genuinely slow -- seconds, not
 //! milliseconds, in pure software on this chip (see
-//! `signer_core::mnemonic_to_seed`'s and `seed_lock::PIN_KDF_ITERATIONS`'s
+//! `corisco_crypto_core::mnemonic_to_seed`'s and `seed_lock::PIN_KDF_ITERATIONS`'s
 //! own doc comments). Slint callbacks run synchronously inside
 //! `dispatch_touch`, and nothing else redraws the screen until the
 //! callback returns -- calling one of these directly from a callback
@@ -38,7 +38,7 @@ use crate::touch::Touch;
 use crate::AppWindow;
 use firmware_core::storage::{Storage, MAX_PIN_ATTEMPTS};
 use firmware_core::{platform, rng};
-use signer_core::{mnemonic_gen, seed_lock};
+use corisco_crypto_core::{mnemonic_gen, seed_lock};
 use slint::platform::software_renderer::MinimalSoftwareWindow;
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 use std::cell::RefCell;
@@ -193,7 +193,7 @@ fn sync_ui(ui: &AppWindow, flow: &FlowInner) {
             ui.set_screen(2);
         }
         Stage::Done(seed) => {
-            let pubkey_short = match signer_core::SparkKeyRoots::from_seed(seed, 0) {
+            let pubkey_short = match corisco_crypto_core::SparkKeyRoots::from_seed(seed, 0) {
                 Ok(roots) => {
                     let full = hex::encode(roots.identity.public_key_compressed());
                     format!("{}...{}", &full[..8], &full[full.len() - 8..])
@@ -236,7 +236,7 @@ fn run_pending_work(ui: &AppWindow, stage: Stage, storage: &Storage) -> Stage {
                 mnemonic_gen::generate_mnemonic_from_entropy(&rng::device_entropy_128())
             };
             let t0 = Instant::now();
-            let seed = signer_core::mnemonic_to_seed(&mnemonic, "");
+            let seed = corisco_crypto_core::mnemonic_to_seed(&mnemonic, "");
             log::info!("ui: mnemonic_to_seed took {:?}", t0.elapsed());
             // Numbered here (not in app.slint) so the Mnemonic screen's
             // display grid only ever needs plain array indexing, never
@@ -305,7 +305,7 @@ fn run_pending_work(ui: &AppWindow, stage: Stage, storage: &Storage) -> Stage {
         Stage::PendingValidateRecovery { words } => match mnemonic_gen::parse_mnemonic(&words) {
             Ok(mnemonic) => {
                 let t0 = Instant::now();
-                let seed = signer_core::mnemonic_to_seed(&mnemonic, "");
+                let seed = corisco_crypto_core::mnemonic_to_seed(&mnemonic, "");
                 log::info!("ui: mnemonic_to_seed (recovery) took {:?}", t0.elapsed());
                 Stage::SetPinFirst { seed }
             }

@@ -14,7 +14,7 @@ firmware-core = { path = "../firmware-core" }
 # Used directly here too (onboarding/unlock in ui/mod.rs, identity key
 # derivation + the boot-time test signature in main.rs), not just via
 # firmware-core.
-signer-core = { workspace = true, features = ["seed-lock", "hw-sha512", "transfer-crypto"] }
+corisco-crypto-core = { workspace = true, features = ["seed-lock", "hw-sha512", "transfer-crypto"] }
 
 esp-idf-svc = { workspace = true, features = ["critical-section"] }
 esp-idf-hal = { workspace = true }

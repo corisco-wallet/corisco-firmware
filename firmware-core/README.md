@@ -19,7 +19,7 @@ specific to its own hardware.
   `render_frame`/`dispatch_touch` helpers that drive Slint's software
   renderer against *any* board's display/touch, via the traits below.
 - **`selftest.rs`** -- boot-time crypto self-tests (`frost_self_test`,
-  `bench_sha512_single_block`) that exercise `signer-core` against real
+  `bench_sha512_single_block`) that exercise `corisco-crypto-core` against real
   hardware. Pure validation logic, no board coupling.
 
 ## What's deliberately NOT in here

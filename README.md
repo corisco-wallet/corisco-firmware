@@ -20,7 +20,7 @@ flowchart LR
     end
     subgraph Device["ESP32 signer (esp32-lilygo-t-display-s3-firmware/)"]
         BLE["firmware-core: ble.rs GATT service"]
-        Core["signer-core (FROST / BIP32)"]
+        Core["corisco-crypto-core (FROST / BIP32)"]
         Roots["Private keys -- RAM only"]
         BLE <--> Core
         Core <--> Roots
