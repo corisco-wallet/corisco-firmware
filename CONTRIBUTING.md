@@ -44,12 +44,23 @@ cargo build --release --config .cargo/patch.toml
 
 ## Wire protocol changes
 
+The wire types live in `corisco-protocol` (host-buildable, no ESP deps).
 New `Request`/`Response` variants must be **appended**, not inserted --
 postcard's wire format encodes an enum variant by its declaration-order
 discriminant, so inserting one silently breaks compatibility with
-whatever's already deployed. Both `ble.rs` and `postcard.ts` need the new
-variant in the same PR, appended in the same relative position on each
-side.
+whatever's already deployed. `postcard.ts` needs the same variant appended
+in the same relative position.
+
+`protocol/vectors.json` holds the exact bytes for every variant, and the
+mobile app's encoder/decoder is tested against it. After a protocol change:
+
+```bash
+UPDATE_VECTORS=1 cargo test -p corisco-protocol --target x86_64-unknown-linux-gnu
+```
+
+and commit the regenerated file. CI also compares it with the latest
+release's vectors: appending is fine, but changing or removing an existing
+case fails unless `PROTOCOL_VERSION` is bumped (use a `feat!:` commit).
 
 ## Coding conventions
 

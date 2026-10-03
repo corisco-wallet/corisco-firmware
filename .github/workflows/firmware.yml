@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
     paths:
+      - "corisco-protocol/**"
+      - "protocol/**"
+      - "scripts/check-protocol-compat.py"
       - "firmware-core/**"
       - "esp32-lilygo-t-display-s3-firmware/**"
       - "Cargo.toml"
@@ -14,6 +17,9 @@ on:
       - ".github/workflows/firmware.yml"
   pull_request:
     paths:
+      - "corisco-protocol/**"
+      - "protocol/**"
+      - "scripts/check-protocol-compat.py"
       - "firmware-core/**"
       - "esp32-lilygo-t-display-s3-firmware/**"
       - "Cargo.toml"
@@ -24,7 +30,34 @@ on:
       - ".github/workflows/firmware.yml"
 
 jobs:
+  # Host-only: no ESP toolchain needed, so this is fast and runs first.
+  protocol:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # tags, for the compatibility baseline
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+      - uses: Swatinem/rust-cache@v2
+      # +stable bypasses rust-toolchain.toml (channel "esp", not installed
+      # here); --target overrides .cargo/config.toml's xtensa default.
+      - name: golden vectors are current
+        run: cargo +stable test -p corisco-protocol --target x86_64-unknown-linux-gnu
+      - name: compatible with the latest release
+        run: |
+          tag=$(git tag --list 'v*' --sort=-v:refname | head -n1)
+          if [ -z "$tag" ]; then
+            echo "No release tag yet; skipping compatibility check."
+            exit 0
+          fi
+          git show "$tag:protocol/vectors.json" > "$RUNNER_TEMP/baseline.json" || {
+            echo "$tag has no protocol/vectors.json; skipping."; exit 0; }
+          python3 scripts/check-protocol-compat.py "$RUNNER_TEMP/baseline.json" protocol/vectors.json
+
   build:
+    needs: protocol
     runs-on: ubuntu-latest
     # espressif/idf-rust ships a full espup-installed Xtensa Rust toolchain
     # + ESP-IDF, so this container has everything `cargo build --release`

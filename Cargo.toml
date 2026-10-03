@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["firmware-core", "esp32-lilygo-t-display-s3-firmware"]
+members = ["corisco-protocol", "firmware-core", "esp32-lilygo-t-display-s3-firmware"]
 
 [workspace.dependencies]
 # Signing logic, validated separately on the host: https://github.com/corisco-wallet/crypto-core
@@ -8,6 +8,7 @@ members = ["firmware-core", "esp32-lilygo-t-display-s3-firmware"]
 # frost-secp256k1-tr / frost-core `rev` below must match the ones used here.
 # To develop against a local checkout, see "Developing against a local
 # crypto-core" in CONTRIBUTING.md.
+corisco-protocol = { path = "corisco-protocol" }
 corisco-crypto-core = { git = "https://github.com/corisco-wallet/crypto-core", tag = "v0.1.0" }
 
 esp-idf-svc = "0.52"
