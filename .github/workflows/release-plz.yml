@@ -79,16 +79,18 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: espflash
+      # Named <board crate>-<tag>.bin so the file says which board and
+      # version it is for, and a second board can't collide with it.
       - name: build and package
         run: |
           cargo build --release
           espflash save-image --chip esp32s3 --merge \
             target/xtensa-esp32s3-espidf/release/esp32-lilygo-t-display-s3-firmware \
-            corisco-firmware.bin
+            "esp32-lilygo-t-display-s3-firmware-${{ needs.release.outputs.tag || inputs.tag }}.bin"
       - uses: actions/upload-artifact@v4
         with:
           name: image
-          path: corisco-firmware.bin
+          path: esp32-lilygo-t-display-s3-firmware-*.bin
 
   # Attach the image + the wire-protocol vectors (what the mobile app pins
   # and tests against) to the GitHub Release.
@@ -108,4 +110,4 @@ jobs:
           GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
         run: |
           gh release upload "${{ needs.release.outputs.tag || inputs.tag }}" \
-            corisco-firmware.bin protocol/vectors.json --clobber
+            esp32-lilygo-t-display-s3-firmware-*.bin protocol/vectors.json --clobber
