@@ -13,7 +13,7 @@ signing protocol.
 
 ```mermaid
 flowchart LR
-    subgraph Phone["Corisco app (corisco-android-app/)"]
+    subgraph Phone["Corisco app (corisco-android-app repo)"]
         SDK["Spark SDK"]
         Signer["BleHardwareSigner"]
         SDK <--> Signer
@@ -45,10 +45,15 @@ receive/send/sign walkthrough, request by request.
 |---|---|
 | `firmware-core/` | Board-agnostic firmware logic shared across ESP32/ESP-IDF boards: BLE GATT signing protocol, PIN-encrypted seed storage, RNG, Slint platform glue |
 | `esp32-lilygo-t-display-s3-firmware/` | Rust firmware for the LilyGo T-Display-S3: display/touch drivers, on-device confirmation UI, boot sequence -- depends on `firmware-core` |
-| `corisco-android-app/` | React Native (Expo) wallet app that pairs with the device over BLE |
+| `corisco-protocol/` | BLE wire protocol (postcard `Request`/`Response`, UUIDs, `PROTOCOL_VERSION`); host-buildable, no ESP deps |
+| `protocol/` | `vectors.json`: golden wire vectors the mobile app is tested against |
 | `docs/` | Architecture walkthrough and dev/test-wallet notes |
 
-Both firmware crates are members of one Cargo workspace rooted at the repo
+The mobile app lives in its own repo,
+[corisco-android-app](https://github.com/corisco-wallet/corisco-android-app), and is tested against the wire-protocol
+vectors published with each firmware release.
+
+The firmware crates are members of one Cargo workspace rooted at the repo
 root (see `Cargo.toml`).
 
 ## Quickstart
@@ -56,8 +61,8 @@ root (see `Cargo.toml`).
 - **Firmware**: see
   [`esp32-lilygo-t-display-s3-firmware/README.md`](esp32-lilygo-t-display-s3-firmware/README.md)
   for hardware prerequisites, the Xtensa toolchain setup, and flashing.
-- **Mobile app**: see [`corisco-android-app/README.md`](corisco-android-app/README.md) for
-  building and running the Android app.
+- **Mobile app**: see the [corisco-android-app repo](https://github.com/corisco-wallet/corisco-android-app) for building
+  and running the Android app.
 - **Testing end to end**: [`docs/testing.md`](docs/testing.md) has two
   ready-made regtest wallets for exercising a real payment.
 

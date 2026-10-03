@@ -918,6 +918,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "corisco-protocol"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "postcard",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "countme"
 version = "3.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1756,6 +1766,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "corisco-crypto-core",
+ "corisco-protocol",
  "enumset",
  "esp-idf-svc",
  "esp32-nimble",

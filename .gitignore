@@ -1,7 +1,6 @@
-# corisco-android-app/ has its own .gitignore. The firmware crates
-# (firmware-core/, esp32-lilygo-t-display-s3-firmware/) are a Cargo
-# workspace rooted here, so their build output is ignored below rather
-# than in a per-crate .gitignore.
+# The firmware crates (corisco-protocol/, firmware-core/,
+# esp32-lilygo-t-display-s3-firmware/) are a Cargo workspace rooted here, so
+# their build output is ignored below rather than in a per-crate .gitignore.
 .DS_Store
 .vscode/
 .idea/
@@ -9,3 +8,6 @@
 /target
 /.embuild
 /.cargo/patch.toml
+
+# Claude Code local config
+/.claude/

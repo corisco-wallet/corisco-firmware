@@ -1,21 +1,18 @@
 # Contributing to corisco-wallet
 
-Thanks for considering a contribution. This repo has two components that
-evolve together: the firmware (`firmware-core` + 
-`esp32-lilygo-t-display-s3-firmware`) and `corisco-android-app` share one
-BLE wire protocol (`firmware-core/src/ble.rs`'s `Request`/`Response` enums
-<-> `corisco-android-app/src/postcard.ts`'s encoder), so a protocol change
-is expected to touch both sides in the same PR.
+Thanks for considering a contribution. This repo is the device firmware. The
+mobile app ([corisco-android-app](https://github.com/corisco-wallet/corisco-android-app)) lives in its own repo and
+shares one BLE wire protocol with it, defined here in `corisco-protocol`.
+A protocol change is released from this repo first; the app then follows
+(see "Wire protocol changes").
 
-## Building each component
+## Building
 
-- **Firmware**: `firmware-core` and `esp32-lilygo-t-display-s3-firmware`
-  are members of one Cargo workspace rooted at the repo root -- see
-  [`esp32-lilygo-t-display-s3-firmware/README.md`](esp32-lilygo-t-display-s3-firmware/README.md)
-  for the Xtensa toolchain setup, then `cargo build --release` from the
-  repo root.
-- **`corisco-android-app`**: see [`corisco-android-app/README.md`](corisco-android-app/README.md)
-  for Android/Expo setup, then `npx tsc --noEmit` for a quick sanity check.
+`corisco-protocol`, `firmware-core` and `esp32-lilygo-t-display-s3-firmware`
+are members of one Cargo workspace rooted at the repo root -- see
+[`esp32-lilygo-t-display-s3-firmware/README.md`](esp32-lilygo-t-display-s3-firmware/README.md)
+for the Xtensa toolchain setup, then `cargo build --release` from the
+repo root.
 
 ## Relationship to crypto-core
 
@@ -44,12 +41,36 @@ cargo build --release --config .cargo/patch.toml
 
 ## Wire protocol changes
 
+The wire types live in `corisco-protocol` (host-buildable, no ESP deps).
 New `Request`/`Response` variants must be **appended**, not inserted --
 postcard's wire format encodes an enum variant by its declaration-order
 discriminant, so inserting one silently breaks compatibility with
-whatever's already deployed. Both `ble.rs` and `postcard.ts` need the new
-variant in the same PR, appended in the same relative position on each
-side.
+whatever's already deployed. The app's `postcard.ts` needs the same variant
+appended in the same relative position, in a follow-up PR in the app repo.
+
+`protocol/vectors.json` holds the exact bytes for every variant, and the
+mobile app's encoder/decoder is tested against it. After a protocol change:
+
+```bash
+UPDATE_VECTORS=1 cargo test -p corisco-protocol --target x86_64-unknown-linux-gnu
+```
+
+and commit the regenerated file. CI also compares it with the latest
+release's vectors: appending is fine, but changing or removing an existing
+case fails unless `PROTOCOL_VERSION` is bumped (use a `feat!:` commit).
+
+## Releases
+
+Firmware releases are automated by [release-plz](https://release-plz.dev)
+from [Conventional Commits](https://www.conventionalcommits.org/). On each
+push to `main` it opens/updates a release PR (version bump +
+`CHANGELOG.md`); merging it tags `vX.Y.Z`, creates the GitHub Release, and
+attaches `corisco-firmware.bin` and `protocol/vectors.json`. The mobile app
+pins a firmware release and tests against that release's vectors.
+
+Needs the repo secret `RELEASE_PLZ_TOKEN` (a fine-grained PAT with
+contents, pull-requests and workflows write access) so the release PR and
+tags trigger CI.
 
 ## Coding conventions
 
@@ -73,5 +94,5 @@ you've found an actual vulnerability, please follow this org's
 ## Review
 
 See `.github/CODEOWNERS` for who reviews what. Branch protection on
-`main` requires CI (firmware build + corisco-android-app typecheck) to pass
+`main` requires CI (protocol vectors/compat + firmware build) to pass
 and at least one approving review before merge.

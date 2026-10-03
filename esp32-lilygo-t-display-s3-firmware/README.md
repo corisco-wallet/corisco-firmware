@@ -108,7 +108,7 @@ decrypted into RAM after a correct PIN unlock. After `MAX_PIN_ATTEMPTS`
 wrong attempts the encrypted seed is wiped (see `src/storage.rs`).
 
 Once unlocked, the device advertises over BLE and is discoverable to the
-mobile app (`corisco-android-app/`) for pairing.
+mobile app ([corisco-android-app](https://github.com/corisco-wallet/corisco-android-app)) for pairing.
 
 ## Testing
 

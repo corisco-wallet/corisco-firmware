@@ -1,0 +1,99 @@
+name: release-plz
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+# rust-toolchain.toml pins the Xtensa "esp" channel, which isn't installed on
+# a plain runner; release-plz only needs cargo metadata, so use stable.
+env:
+  RUSTUP_TOOLCHAIN: stable
+
+jobs:
+  # Tags + GitHub Release for a firmware version that isn't tagged yet.
+  release:
+    runs-on: ubuntu-latest
+    outputs:
+      releases_created: ${{ steps.release-plz.outputs.releases_created }}
+      tag: ${{ fromJSON(steps.release-plz.outputs.releases || '[{}]')[0].tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # A PAT (not GITHUB_TOKEN) so what release-plz creates triggers
+          # other workflows, e.g. CI on the release PR.
+          token: ${{ secrets.RELEASE_PLZ_TOKEN }}
+      - uses: dtolnay/rust-toolchain@stable
+      - id: release-plz
+        uses: release-plz/action@v0.5
+        with:
+          command: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+
+  # Opens/updates the release PR (version bump + CHANGELOG.md) from
+  # conventional commits. Merging it triggers the job above.
+  release-pr:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: release-plz-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_PLZ_TOKEN }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: release-plz/action@v0.5
+        with:
+          command: release-pr
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+
+  # Build the flashable image at the release tag.
+  build-image:
+    needs: release
+    if: needs.release.outputs.releases_created == 'true'
+    runs-on: ubuntu-latest
+    container: espressif/idf-rust:esp32s3_latest
+    env:
+      RUSTUP_TOOLCHAIN: esp
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release.outputs.tag }}
+      - name: build and package
+        run: |
+          . /root/export-esp.sh
+          cargo build --release
+          command -v espflash >/dev/null || cargo install espflash --locked
+          espflash save-image --chip esp32s3 --merge \
+            target/xtensa-esp32s3-espidf/release/esp32-lilygo-t-display-s3-firmware \
+            corisco-firmware.bin
+      - uses: actions/upload-artifact@v4
+        with:
+          name: image
+          path: corisco-firmware.bin
+
+  # Attach the image + the wire-protocol vectors (what the mobile app pins
+  # and tests against) to the GitHub Release.
+  upload-assets:
+    needs: [release, build-image]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release.outputs.tag }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: image
+      - name: upload
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+        run: |
+          gh release upload "${{ needs.release.outputs.tag }}" \
+            corisco-firmware.bin protocol/vectors.json --clobber
