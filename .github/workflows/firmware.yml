@@ -15,6 +15,7 @@ on:
       - "sdkconfig.defaults"
       - "rust-toolchain.toml"
       - ".github/workflows/firmware.yml"
+      - ".github/actions/esp-toolchain/**"
   pull_request:
     paths:
       - "corisco-protocol/**"
@@ -28,6 +29,7 @@ on:
       - "sdkconfig.defaults"
       - "rust-toolchain.toml"
       - ".github/workflows/firmware.yml"
+      - ".github/actions/esp-toolchain/**"
 
 jobs:
   # Host-only: no ESP toolchain needed, so this is fast and runs first.
@@ -59,33 +61,16 @@ jobs:
   build:
     needs: protocol
     runs-on: ubuntu-latest
-    # espressif/idf-rust ships a full espup-installed Xtensa Rust toolchain
-    # + ESP-IDF, so this container has everything `cargo build --release`
-    # needs with no espup/export-esp.sh setup step of its own. Tag is keyed
-    # by Rust toolchain release, not ESP-IDF version -- if this ever drifts
-    # from .cargo/config.toml's pinned `ESP_IDF_VERSION`, pin to a specific
-    # dated tag instead of `_latest` (see Docker Hub:
-    # https://hub.docker.com/r/espressif/idf-rust/tags).
-    container:
-      image: espressif/idf-rust:esp32s3_latest
-      # The image's default user can't write the runner's temp dir, which
-      # makes actions/checkout fail with EACCES.
-      options: --user root
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/esp-toolchain
       - uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             target
+            .embuild
           key: firmware-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: firmware-${{ runner.os }}-
       - name: build
-        run: |
-          # The image's toolchain lives in the `esp` user's home; we run as root
-          # (see container options), so point rustup/cargo there explicitly.
-          export RUSTUP_HOME=/home/esp/.rustup CARGO_HOME=/home/esp/.cargo
-          export PATH=/home/esp/.cargo/bin:$PATH
-          [ -f /home/esp/export-esp.sh ] || { ls -la /home/esp /root; exit 1; }
-          . /home/esp/export-esp.sh
-          cargo build --release
+        run: cargo build --release

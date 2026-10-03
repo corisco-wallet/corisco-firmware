@@ -1,0 +1,18 @@
+name: ESP Xtensa Rust toolchain
+description: Installs the Xtensa Rust toolchain (same version as local dev) and ESP-IDF build prerequisites.
+
+runs:
+  using: composite
+  steps:
+    # Pinned to match local development. The espressif/idf-rust Docker
+    # image's newest toolchain (1.95) hits an LLVM crash ("Cannot select
+    # v4i1") compiling the `uuid` crate for Xtensa; 1.97 does not.
+    - uses: esp-rs/xtensa-toolchain@v1.7.0
+      with:
+        version: "1.97.0.0"
+        buildtargets: esp32s3
+        ldproxy: true
+        default: false
+    - name: ESP-IDF build prerequisites
+      shell: bash
+      run: sudo apt-get update && sudo apt-get install -y --no-install-recommends python3-venv cmake ninja-build libudev-dev

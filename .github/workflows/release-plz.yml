@@ -67,27 +67,19 @@ jobs:
     needs: release
     if: always() && (needs.release.outputs.releases_created == 'true' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
-    container:
-      image: espressif/idf-rust:esp32s3_latest
-      # The image's default user can't write the runner's temp dir, which
-      # makes actions/checkout fail with EACCES.
-      options: --user root
     env:
       RUSTUP_TOOLCHAIN: esp
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.release.outputs.tag || inputs.tag }}
+      - uses: ./.github/actions/esp-toolchain
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: espflash
       - name: build and package
         run: |
-          # The image's toolchain lives in the `esp` user's home; we run as root
-          # (see container options), so point rustup/cargo there explicitly.
-          export RUSTUP_HOME=/home/esp/.rustup CARGO_HOME=/home/esp/.cargo
-          export PATH=/home/esp/.cargo/bin:$PATH
-          [ -f /home/esp/export-esp.sh ] || { ls -la /home/esp /root; exit 1; }
-          . /home/esp/export-esp.sh
           cargo build --release
-          command -v espflash >/dev/null || cargo install espflash --locked
           espflash save-image --chip esp32s3 --merge \
             target/xtensa-esp32s3-espidf/release/esp32-lilygo-t-display-s3-firmware \
             corisco-firmware.bin
