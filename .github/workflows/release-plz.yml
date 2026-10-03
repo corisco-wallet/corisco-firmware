@@ -80,7 +80,12 @@ jobs:
           ref: ${{ needs.release.outputs.tag || inputs.tag }}
       - name: build and package
         run: |
-          . /root/export-esp.sh
+          # The image's toolchain lives in the `esp` user's home; we run as root
+          # (see container options), so point rustup/cargo there explicitly.
+          export RUSTUP_HOME=/home/esp/.rustup CARGO_HOME=/home/esp/.cargo
+          export PATH=/home/esp/.cargo/bin:$PATH
+          [ -f /home/esp/export-esp.sh ] || { ls -la /home/esp /root; exit 1; }
+          . /home/esp/export-esp.sh
           cargo build --release
           command -v espflash >/dev/null || cargo install espflash --locked
           espflash save-image --chip esp32s3 --merge \
