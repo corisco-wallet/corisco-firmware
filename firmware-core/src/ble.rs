@@ -784,7 +784,8 @@ pub fn run(
     // Same `advertising` handle `on_disconnect` above captured -- `&'static
     // Mutex<_>` is `Copy`, so that `move` closure only copied the
     // reference, this binding is still valid.
-    advertising.lock().set_data(BLEAdvertisementData::new().name("SparkHW").add_service_uuid(uuid(SERVICE_UUID)))?;
+    BLEDevice::set_device_name(&device_name())?;
+    advertising.lock().set_data(BLEAdvertisementData::new().name(&device_name()).add_service_uuid(uuid(SERVICE_UUID)))?;
     advertising.lock().start()?;
     if status_tx.send(BleStatus::Advertising).is_err() {
         log::warn!("ble: no receiver for status display (UI thread gone?)");
@@ -796,6 +797,18 @@ pub fn run(
     loop {
         esp_idf_svc::hal::delay::FreeRtos::delay_ms(1000);
     }
+}
+
+/// Last 3 bytes of the BT MAC, uppercase hex: unique per chip and stable across wipes.
+pub fn device_id() -> String {
+    let mut mac = [0u8; 6];
+    unsafe { esp_idf_svc::sys::esp_read_mac(mac.as_mut_ptr(), esp_idf_svc::sys::esp_mac_type_t_ESP_MAC_BT) };
+    format!("{:02X}{:02X}{:02X}", mac[3], mac[4], mac[5])
+}
+
+/// Advertised BLE name; the app's `isSignerName` matches on the `Corisco-` prefix.
+pub fn device_name() -> String {
+    format!("Corisco-{}", device_id())
 }
 
 /// A fresh random 6-digit (000000..=999999) passkey, via the same
