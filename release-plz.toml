@@ -1,6 +1,8 @@
 [workspace]
 # Firmware is flashed from GitHub Release assets, never published to crates.io.
 publish = false
+# Not on crates.io, so the last release must be found from git tags.
+git_only = true
 # release-plz's semver check builds the crate; it can't build for Xtensa.
 semver_check = false
 changelog_update = true
