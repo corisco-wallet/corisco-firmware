@@ -97,6 +97,15 @@ component Icon {
     }
 }
 
+// Two-tone brand mark, so no `colorize`; width follows the SVG's aspect ratio.
+component Logo {
+    Image {
+        source: @image-url("./icons/logo.svg");
+        height: root.height;
+        width: self.height * 0.556;
+    }
+}
+
 component Header inherits Rectangle {
     in property <string> title;
     in property <bool> show-back: false;
@@ -223,36 +232,31 @@ export component AppWindow inherits Window {
     callback disable-confirmation-confirm-pressed();
     callback disable-confirmation-cancel-pressed();
 
-    if root.screen == 0: VerticalLayout {
+    if root.screen == 0: HorizontalLayout {
         VerticalLayout {
             alignment: center;
             spacing: 8px;
-            HorizontalLayout {
-                alignment: center;
-                spacing: 10px;
-                Icon { source: @image-url("./icons/key.svg"); color: Theme.accent; size: 26px; }
-                Text {
-                    text: "Corisco Wallet";
-                    color: Theme.accent;
-                    font-size: 24px;
-                    font-weight: 700;
-                    vertical-alignment: center;
-                }
-            }
+            Logo { height: 96px; }
             Text {
-                text: "Your keys never leave this device.";
-                color: Theme.text-secondary;
-                font-size: 14px;
+                text: "Corisco";
+                color: Theme.text-primary;
+                font-size: 24px;
+                font-weight: 700;
                 horizontal-alignment: center;
             }
         }
-        PrimaryButton {
-            text: "Create new wallet";
-            clicked => { root.create-pressed(); }
-        }
-        OutlineButton {
-            text: "Recover wallet";
-            clicked => { root.recover-pressed(); }
+        VerticalLayout {
+            width: 170px;
+            PrimaryButton {
+                height: 85px;
+                text: "Create new wallet";
+                clicked => { root.create-pressed(); }
+            }
+            OutlineButton {
+                height: 85px;
+                text: "Recover wallet";
+                clicked => { root.recover-pressed(); }
+            }
         }
     }
 
@@ -342,43 +346,47 @@ export component AppWindow inherits Window {
     }
 
     if root.screen == 3: VerticalLayout {
-        VerticalLayout {
-            alignment: center;
-            padding: 8px;
-            spacing: 8px;
-            HorizontalLayout {
+        HorizontalLayout {
+            VerticalLayout {
                 alignment: center;
+                width: 110px;
+                Logo { height: 84px; }
+            }
+            VerticalLayout {
+                alignment: center;
+                padding: 8px;
                 spacing: 8px;
-                Icon { source: @image-url("./icons/check.svg"); color: Theme.success; size: 22px; }
+                HorizontalLayout {
+                    spacing: 8px;
+                    Icon { source: @image-url("./icons/check.svg"); color: Theme.success; size: 22px; }
+                    Text {
+                        text: "Ready";
+                        color: Theme.success;
+                        font-size: 24px;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                    }
+                }
+                HorizontalLayout {
+                    spacing: 6px;
+                    Icon {
+                        source: @image-url("./icons/bluetooth.svg");
+                        color: root.ble-connected ? Theme.success : Theme.accent;
+                        size: 16px;
+                    }
+                    Text {
+                        text: root.ble-connected ? "Connected" : "Advertising";
+                        color: Theme.text-secondary;
+                        font-size: 15px;
+                        vertical-alignment: center;
+                    }
+                }
                 Text {
-                    text: "Ready";
-                    color: Theme.success;
-                    font-size: 24px;
-                    font-weight: 700;
-                    vertical-alignment: center;
+                    text: root.identity-pubkey-short;
+                    color: Theme.text-muted;
+                    font-size: 12px;
+                    wrap: word-wrap;
                 }
-            }
-            HorizontalLayout {
-                alignment: center;
-                spacing: 6px;
-                Icon {
-                    source: @image-url("./icons/bluetooth.svg");
-                    color: root.ble-connected ? Theme.success : Theme.accent;
-                    size: 16px;
-                }
-                Text {
-                    text: root.ble-connected ? "Connected" : "Advertising";
-                    color: Theme.text-secondary;
-                    font-size: 15px;
-                    vertical-alignment: center;
-                }
-            }
-            Text {
-                text: root.identity-pubkey-short;
-                color: Theme.text-muted;
-                font-size: 12px;
-                horizontal-alignment: center;
-                wrap: word-wrap;
             }
         }
         OutlineButton {
