@@ -1640,7 +1640,7 @@ dependencies = [
 
 [[package]]
 name = "esp32-lilygo-t-display-s3-firmware"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "corisco-crypto-core",
