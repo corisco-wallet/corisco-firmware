@@ -187,6 +187,7 @@ export component AppWindow inherits Window {
     in property <string> pin-error: "";
 
     in property <string> identity-pubkey-short: "";
+    in property <string> device-name: "";
     // A peripheral can't advertise while connected, so two states suffice.
     in property <bool> ble-connected: false;
 
@@ -382,6 +383,12 @@ export component AppWindow inherits Window {
                     }
                 }
                 Text {
+                    text: root.device-name;
+                    color: Theme.text-primary;
+                    font-size: 15px;
+                    font-weight: 700;
+                }
+                Text {
                     text: root.identity-pubkey-short;
                     color: Theme.text-muted;
                     font-size: 12px;
@@ -500,7 +507,7 @@ export component AppWindow inherits Window {
             horizontal-alignment: center;
         }
         Text {
-            text: "Enter this code on your phone:";
+            text: "Enter this code on your phone for " + root.device-name + ":";
             color: Theme.text-secondary;
             font-size: 14px;
             horizontal-alignment: center;

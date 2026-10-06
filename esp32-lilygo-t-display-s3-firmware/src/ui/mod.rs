@@ -37,7 +37,7 @@ use crate::display::Display;
 use crate::touch::Touch;
 use crate::AppWindow;
 use firmware_core::storage::{Storage, MAX_PIN_ATTEMPTS};
-use firmware_core::{platform, rng};
+use firmware_core::{ble, platform, rng};
 use corisco_crypto_core::{mnemonic_gen, seed_lock};
 use slint::platform::software_renderer::MinimalSoftwareWindow;
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
@@ -360,6 +360,7 @@ pub fn run_onboarding_or_unlock(
     already_provisioned: bool,
 ) -> anyhow::Result<(AppWindow, [u8; 64])> {
     let ui = AppWindow::new().map_err(|e| anyhow::anyhow!("AppWindow::new failed: {e:?}"))?;
+    ui.set_device_name(ble::device_name().into());
     ui.show().map_err(|e| anyhow::anyhow!("AppWindow::show failed: {e:?}"))?;
 
     let flow = Rc::new(RefCell::new(FlowInner {
