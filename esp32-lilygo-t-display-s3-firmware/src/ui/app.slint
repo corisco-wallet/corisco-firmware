@@ -1,31 +1,14 @@
-// Inter (SIL Open Font License, see fonts/Inter-OFL.txt) -- picked for
-// small-size UI legibility over whatever the build machine's fontconfig
-// happened to resolve before (this crate has no "systemfonts" feature, so
-// without an explicit font `import` like this, glyph rasterization at
-// compile time silently fell back to an arbitrary local font, not a
-// deliberately chosen one -- see build.rs's own comment on why fonts must
-// be pre-rasterized at all here). Referenced by family name below via
-// `default-font-family` so every screen picks it up with no per-`Text`
-// change needed.
+// Inter (SIL Open Font License, see fonts/Inter-OFL.txt). Fonts must be
+// imported explicitly: this crate has no "systemfonts" feature, so without it
+// glyph rasterization silently falls back to an arbitrary build-machine font.
 import "./fonts/Inter.ttf";
 
-// One root component with conditional `if` blocks per screen rather than
-// separate top-level components -- avoids juggling multiple window
-// adapters against `platform::EspPlatform`, which always hands back the
-// same `MinimalSoftwareWindow` (see platform.rs's `create_window_adapter`).
-// The PIN pad layout is shared between "set PIN" and "unlock" (driven by
-// `pin-title`/`pin-error` properties from Rust) rather than duplicated.
+// One root component with `if` blocks per screen: `platform::EspPlatform`
+// always hands back the same `MinimalSoftwareWindow` (see platform.rs).
+// The PIN pad is shared between "set PIN" and "unlock" via `pin-title`/`pin-error`.
 
-// Design tokens, formalized to match `corisco-android-app/src/theme.ts` (Corisco's phone app)
-// almost exactly -- the two already shared most of these hex values by
-// coincidence before this pass; this makes it deliberate and fixes the
-// one real drift (`border`, previously #3a3a42 here vs #2A2A33 there).
-// Keeps this device's amber/orange identity as-is per explicit user
-// choice (Blockstream Jade's own actual brand palette is teal, offered
-// and declined -- only Jade's general "clean, considered UI" was wanted
-// as inspiration, not its literal colors). One token neither app had
-// before: `accent-pressed`, a darker amber for secondary/danger-adjacent
-// accents so not every highlight is identical.
+// Hex values mirror `corisco-android-app/src/theme.ts` (including the orange accent).
+// Only Blockstream Jade's layout was wanted as inspiration, not its colors.
 global Theme {
     out property <color> bg: #0b0b0f;
     out property <color> surface: #17171d;
@@ -34,107 +17,74 @@ global Theme {
     out property <color> text-secondary: #9b9ba6;
     out property <color> text-muted: #6b6b76;
     out property <color> text-disabled: #4a4a52;
-    out property <color> accent: #f5b942;
-    out property <color> accent-pressed: #c8912f;
+    out property <color> accent: #ff5a1f;
+    out property <color> accent-pressed: #cc4819;
     out property <color> accent-text: #1a1305;
     out property <color> error: #ff6b6b;
+    out property <color> error-pressed: #c85252;
     out property <color> error-text: #1a0505;
     out property <color> success: #4ade80;
+    out property <color> pressed: #2a2a33;
 
-    out property <length> radius-sm: 6px;
-    out property <length> radius-md: 8px;
+    out property <length> button-height: 48px;
+    out property <length> header-height: 36px;
 }
 
-// The three recurring button shapes (solid accent, outlined, solid
-// danger) -- previously each hand-copied as a `Rectangle`+`TouchArea`+
-// `Text` block, 17 times across the 11 screens below. Extracting them
-// means a styling change (or the pressed-state feedback, icon, etc. this
-// plan still wants to add) only needs writing once. Each behaves as a
-// plain `Rectangle` would for layout purposes (their root element *is*
-// one), so dropping one into a `HorizontalLayout`/`VerticalLayout` in
-// place of the old inline block needs no other change at the call site.
-component PrimaryButton {
+// Square, edge-to-edge buttons: no radius, no outer margin, so a row of them
+// can sit flush against the screen border.
+component PrimaryButton inherits Rectangle {
     in property <string> text;
-    in property <length> button-height: 36px;
     callback clicked();
-    Rectangle {
-        height: root.button-height;
-        border-radius: Theme.radius-md;
-        background: Theme.accent;
-        TouchArea {
-            width: 100%;
-            height: 100%;
-            clicked => { root.clicked(); }
-        }
-        Text {
-            text: root.text;
-            color: Theme.accent-text;
-            font-size: 13px;
-            font-weight: 700;
-            horizontal-alignment: center;
-            vertical-alignment: center;
-            wrap: word-wrap;
-        }
+    height: Theme.button-height;
+    background: ta.pressed ? Theme.accent-pressed : Theme.accent;
+    ta := TouchArea { clicked => { root.clicked(); } }
+    Text {
+        text: root.text;
+        color: Theme.accent-text;
+        font-size: 16px;
+        font-weight: 700;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        wrap: word-wrap;
     }
 }
 
-component OutlineButton {
+component OutlineButton inherits Rectangle {
     in property <string> text;
-    in property <length> button-height: 36px;
     callback clicked();
-    Rectangle {
-        height: root.button-height;
-        border-radius: Theme.radius-md;
-        background: transparent;
-        border-width: 1px;
-        border-color: Theme.border;
-        TouchArea {
-            width: 100%;
-            height: 100%;
-            clicked => { root.clicked(); }
-        }
-        Text {
-            text: root.text;
-            color: Theme.text-primary;
-            font-size: 13px;
-            horizontal-alignment: center;
-            vertical-alignment: center;
-            wrap: word-wrap;
-        }
+    height: Theme.button-height;
+    background: ta.pressed ? Theme.pressed : Theme.surface;
+    border-width: 1px;
+    border-color: Theme.border;
+    ta := TouchArea { clicked => { root.clicked(); } }
+    Text {
+        text: root.text;
+        color: Theme.text-primary;
+        font-size: 16px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        wrap: word-wrap;
     }
 }
 
-component DangerButton {
+component DangerButton inherits Rectangle {
     in property <string> text;
-    in property <length> button-height: 36px;
     callback clicked();
-    Rectangle {
-        height: root.button-height;
-        border-radius: Theme.radius-md;
-        background: Theme.error;
-        TouchArea {
-            width: 100%;
-            height: 100%;
-            clicked => { root.clicked(); }
-        }
-        Text {
-            text: root.text;
-            color: Theme.error-text;
-            font-size: 12px;
-            font-weight: 700;
-            horizontal-alignment: center;
-            vertical-alignment: center;
-            wrap: word-wrap;
-        }
+    height: Theme.button-height;
+    background: ta.pressed ? Theme.error-pressed : Theme.error;
+    ta := TouchArea { clicked => { root.clicked(); } }
+    Text {
+        text: root.text;
+        color: Theme.error-text;
+        font-size: 16px;
+        font-weight: 700;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        wrap: word-wrap;
     }
 }
 
-// Hand-drawn (Feather-style) monochrome SVGs under ./icons/, tinted via
-// `colorize` -- same technique already used for dimming disabled letters
-// on the word-entry keyboard, just applied to a real picture instead of a
-// text color. The source SVGs' own stroke color doesn't matter (`colorize`
-// replaces it entirely, keyed off each pixel's alpha) -- picked plain
-// black so they're visible if ever previewed outside this tinting.
+// Colorized monochrome SVGs from ./icons/; the source stroke color is ignored.
 component Icon {
     in property <image> source;
     in property <brush> color: Theme.text-primary;
@@ -147,9 +97,59 @@ component Icon {
     }
 }
 
+component Header inherits Rectangle {
+    in property <string> title;
+    in property <bool> show-back: false;
+    callback back-clicked();
+    height: Theme.header-height;
+    background: Theme.surface;
+    Rectangle {
+        y: parent.height - 1px;
+        height: 1px;
+        background: Theme.border;
+    }
+    if root.show-back: Rectangle {
+        x: 0px;
+        width: Theme.header-height + 8px;
+        background: back-ta.pressed ? Theme.pressed : transparent;
+        border-width: 1px;
+        border-color: Theme.border;
+        back-ta := TouchArea { clicked => { root.back-clicked(); } }
+        Icon {
+            source: @image-url("./icons/arrow-left.svg");
+            size: 20px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+        }
+    }
+    Text {
+        text: root.title;
+        color: Theme.text-primary;
+        font-size: 18px;
+        font-weight: 700;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+component Key inherits Rectangle {
+    in property <string> label;
+    callback clicked();
+    background: ta.pressed ? Theme.pressed : Theme.surface;
+    border-width: 1px;
+    border-color: Theme.border;
+    ta := TouchArea { clicked => { root.clicked(); } }
+    Text {
+        text: root.label;
+        color: Theme.text-primary;
+        font-size: 22px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
 export component AppWindow inherits Window {
-    // Landscape -- matches `display::WIDTH`/`HEIGHT` in this crate's
-    // src/display.rs, which must stay in sync with these literals.
+    // Must stay in sync with `display::WIDTH`/`HEIGHT` in src/display.rs.
     width: 320px;
     height: 170px;
     background: Theme.bg;
@@ -160,72 +160,44 @@ export component AppWindow inherits Window {
     // 12=DisableConfirmationConfirm
     in-out property <int> screen: 0;
 
-    // -- Pairing screen -- SecurityIOCap::DisplayOnly means the phone
-    // can't show the passkey itself; it must come from here (ble.rs's
-    // on_passkey_request).
+    // SecurityIOCap::DisplayOnly: the passkey must be shown here (ble.rs's on_passkey_request).
     in property <string> pairing-passkey: "";
 
-    // -- Working screen -- shown for at least one real frame before any
-    // slow crypto call (mnemonic/seed generation, PIN encrypt/decrypt),
-    // which otherwise blocks the whole render loop with nothing drawn --
-    // see ui/mod.rs's module doc comment.
+    // Shown for at least one real frame before slow crypto calls, which block the render loop.
     in property <string> working-label: "Working...";
 
-    // -- Mnemonic screen -- paginated (12 words/page: exactly one page for
-    // a 12-word wallet, two for 24-word) rather than scrollable -- a flick
-    // gesture is easy to miss entirely on a screen this small, and missing
-    // a word here is a much worse failure than on any other screen (see
-    // ui/mod.rs's `Stage::Mnemonic` doc comment).
+    // Paginated at 12 words/page rather than scrollable: a missed word here is
+    // a much worse failure than on any other screen.
     in property <[string]> mnemonic-words: [];
     in property <int> mnemonic-page: 0;
     in property <int> mnemonic-page-count: 1;
 
-    // -- Pin screen (shared: set-pin first entry, set-pin confirm, unlock) --
     in property <string> pin-title: "Enter PIN";
     in property <int> pin-entered-count: 0;
     in property <int> pin-max-length: 6;
     in property <string> pin-error: "";
 
-    // -- Home screen --
     in property <string> identity-pubkey-short: "";
-    // Set from ble.rs's `BleStatus` via main.rs's render loop -- only two
-    // real states (a peripheral can't advertise while connected), so a
-    // bool is enough: false = advertising/discoverable, true = a phone is
-    // connected. Defaults false, which is also correct for the brief
-    // window between the Home screen first showing and the BLE thread's
-    // first status message actually arriving.
+    // A peripheral can't advertise while connected, so two states suffice.
     in property <bool> ble-connected: false;
 
-    // -- Sign confirmation screen --
     in property <string> sign-leaf-id-short: "";
     in property <string> sign-fingerprint: "";
-    // App-asserted, not independently verified against the FROST message
-    // (the wire protocol only ever carries a sighash there, which can't be
-    // reversed back into an amount/destination -- see ble.rs's `Request::Sign`
-    // doc comment). Empty when the app didn't supply them, in which case
-    // the leaf id + fingerprint above are shown instead.
+    // App-asserted, not verified against the FROST message (the wire protocol
+    // only carries a sighash). Empty when the app didn't supply them.
     in property <string> sign-amount-sats: "";
     in property <string> sign-destination: "";
 
-    // -- Wiped screen --
     in property <string> wiped-reason: "";
 
-    // -- Settings screen --
-    // Mirrors `ble.rs`'s `Signer.require_confirmation` (via `main.rs`'s
-    // wiring) -- when false, a real `Sign` auto-signs on-device with no
-    // prompt at all, regardless of what the app requests. A real
-    // security-posture change, not a cosmetic preference -- see
-    // `disable-confirmation-*` below for why turning it off (but not back
-    // on) is gated behind its own confirm screen.
+    // Mirrors `ble.rs`'s `Signer.require_confirmation`. Turning it off is a
+    // security-posture change, hence the separate confirm screen (12).
     in property <bool> require-confirmation: true;
 
-    // -- Word-entry screen (recovery) --
     in property <string> word-entry-progress: "";
     in property <string> word-entry-prefix: "";
     in property <[string]> word-suggestions: [];
-    // 26 entries, a-z -- dimmed/non-interactive when false (no candidate
-    // word continues the current prefix + that letter). See
-    // ui/mod.rs's WordEntry stage doc comment.
+    // 26 entries, a-z; false when no candidate word continues the prefix with that letter.
     in property <[bool]> letter-enabled: [];
     in property <string> word-entry-error: "";
 
@@ -252,109 +224,84 @@ export component AppWindow inherits Window {
     callback disable-confirmation-cancel-pressed();
 
     if root.screen == 0: VerticalLayout {
-        alignment: center;
-        padding: 16px;
-        spacing: 16px;
-        HorizontalLayout {
+        VerticalLayout {
             alignment: center;
             spacing: 8px;
-            Icon { source: @image-url("./icons/key.svg"); color: Theme.accent; size: 20px; }
+            HorizontalLayout {
+                alignment: center;
+                spacing: 10px;
+                Icon { source: @image-url("./icons/key.svg"); color: Theme.accent; size: 26px; }
+                Text {
+                    text: "Corisco Wallet";
+                    color: Theme.accent;
+                    font-size: 24px;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                }
+            }
             Text {
-                text: "Corisco Wallet";
-                color: Theme.accent;
-                font-size: 20px;
-                font-weight: 700;
-                vertical-alignment: center;
+                text: "Your keys never leave this device.";
+                color: Theme.text-secondary;
+                font-size: 14px;
+                horizontal-alignment: center;
             }
         }
-        Text {
-            text: "Your keys never leave this device.";
-            color: Theme.text-secondary;
-            font-size: 12px;
-            horizontal-alignment: center;
-            wrap: word-wrap;
+        PrimaryButton {
+            text: "Create new wallet";
+            clicked => { root.create-pressed(); }
         }
-        // Side-by-side, not stacked -- two 40px buttons stacked plus the
-        // title/subtitle above overflowed the 170px screen height on real
-        // hardware (confirmed: the Recover button ran off the bottom).
-        HorizontalLayout {
-            spacing: 10px;
-            PrimaryButton {
-                text: "Create new wallet";
-                button-height: 40px;
-                clicked => { root.create-pressed(); }
-            }
-            OutlineButton {
-                text: "Recover wallet";
-                button-height: 40px;
-                clicked => { root.recover-pressed(); }
-            }
+        OutlineButton {
+            text: "Recover wallet";
+            clicked => { root.recover-pressed(); }
         }
     }
 
-    // Paginated, 12 words (3 rows x 4 columns) per page -- 12/24-word
-    // phrases both divide evenly into 12-word pages, so there's never a
-    // partial last page to special-case. Words are pre-numbered in Rust
-    // (`ui/mod.rs`'s `words_model`) rather than built here, so this only
-    // ever needs plain array indexing, not int/string concatenation.
+    // Pre-numbered in Rust (`ui/mod.rs`'s `words_model`), so plain indexing suffices here.
     if root.screen == 1: VerticalLayout {
-        padding: 10px;
-        spacing: 8px;
-        Text {
-            text: "Write down these words, in order (page " + (root.mnemonic-page + 1) + "/" + root.mnemonic-page-count + ")";
-            color: Theme.text-secondary;
-            font-size: 11px;
-            horizontal-alignment: center;
-            wrap: word-wrap;
+        Header {
+            title: "Recovery phrase " + (root.mnemonic-page + 1) + "/" + root.mnemonic-page-count;
         }
         GridLayout {
-            spacing: 4px;
-            for r in 3: Row {
-                for c in 4: Text {
-                    text: root.mnemonic-words[root.mnemonic-page * 12 + r * 4 + c];
+            padding-left: 8px;
+            padding-right: 8px;
+            for r in 4: Row {
+                for c in 3: Text {
+                    text: root.mnemonic-words[root.mnemonic-page * 12 + r * 3 + c];
                     color: Theme.text-primary;
-                    font-size: 12px;
-                    horizontal-alignment: center;
+                    font-size: 16px;
+                    horizontal-alignment: left;
+                    vertical-alignment: center;
                 }
             }
         }
         HorizontalLayout {
-            spacing: 8px;
             if root.mnemonic-page > 0: OutlineButton {
-                text: "< Back";
-                button-height: 34px;
+                text: "Back";
                 clicked => { root.mnemonic-prev-page-pressed(); }
             }
             if root.mnemonic-page + 1 < root.mnemonic-page-count: PrimaryButton {
                 text: "Next";
-                button-height: 34px;
                 clicked => { root.mnemonic-next-page-pressed(); }
             }
             if root.mnemonic-page + 1 >= root.mnemonic-page-count: PrimaryButton {
                 text: "I've written this down";
-                button-height: 34px;
                 clicked => { root.mnemonic-continue-pressed(); }
             }
         }
     }
 
-    // Title/dots/error sit in a narrow left column instead of stacking
-    // above the keypad -- at only 170px of screen height, stacking all of
-    // title+dots+error+4 keypad rows vertically overflows the screen
-    // entirely. Side-by-side keeps the keypad's own 4-row height
-    // comfortable.
+    // Title/dots/error sit beside the keypad: stacked above it they overflow 170px.
     if root.screen == 2: HorizontalLayout {
-        padding: 8px;
-        spacing: 10px;
         VerticalLayout {
             alignment: center;
-            width: 96px;
+            width: 110px;
+            padding: 8px;
             spacing: 8px;
-            Icon { source: @image-url("./icons/lock.svg"); color: Theme.accent; size: 22px; }
+            Icon { source: @image-url("./icons/lock.svg"); color: Theme.accent; size: 26px; }
             Text {
                 text: root.pin-title;
                 color: Theme.text-primary;
-                font-size: 13px;
+                font-size: 16px;
                 horizontal-alignment: center;
                 wrap: word-wrap;
             }
@@ -371,175 +318,119 @@ export component AppWindow inherits Window {
             Text {
                 text: root.pin-error;
                 color: Theme.error;
-                font-size: 9px;
+                font-size: 12px;
                 horizontal-alignment: center;
                 wrap: word-wrap;
             }
         }
         GridLayout {
-            spacing: 6px;
             Row {
-                for n in 3: Rectangle {
-                    height: 34px;
-                    border-radius: Theme.radius-sm;
-                    background: Theme.surface;
-                    border-width: 1px;
-                    border-color: Theme.border;
-                    TouchArea { width: 100%; height: 100%; clicked => { root.pin-digit-pressed(n + 1); } }
-                    Text { text: n + 1; color: Theme.text-primary; font-size: 15px; horizontal-alignment: center; vertical-alignment: center; }
-                }
+                for n in 3: Key { label: n + 1; clicked => { root.pin-digit-pressed(n + 1); } }
             }
             Row {
-                for n in 3: Rectangle {
-                    height: 34px;
-                    border-radius: Theme.radius-sm;
-                    background: Theme.surface;
-                    border-width: 1px;
-                    border-color: Theme.border;
-                    TouchArea { width: 100%; height: 100%; clicked => { root.pin-digit-pressed(n + 4); } }
-                    Text { text: n + 4; color: Theme.text-primary; font-size: 15px; horizontal-alignment: center; vertical-alignment: center; }
-                }
+                for n in 3: Key { label: n + 4; clicked => { root.pin-digit-pressed(n + 4); } }
             }
             Row {
-                for n in 3: Rectangle {
-                    height: 34px;
-                    border-radius: Theme.radius-sm;
-                    background: Theme.surface;
-                    border-width: 1px;
-                    border-color: Theme.border;
-                    TouchArea { width: 100%; height: 100%; clicked => { root.pin-digit-pressed(n + 7); } }
-                    Text { text: n + 7; color: Theme.text-primary; font-size: 15px; horizontal-alignment: center; vertical-alignment: center; }
-                }
+                for n in 3: Key { label: n + 7; clicked => { root.pin-digit-pressed(n + 7); } }
             }
             Row {
                 Rectangle { }
-                Rectangle {
-                    height: 34px;
-                    border-radius: Theme.radius-sm;
-                    background: Theme.surface;
-                    border-width: 1px;
-                    border-color: Theme.border;
-                    TouchArea { width: 100%; height: 100%; clicked => { root.pin-digit-pressed(0); } }
-                    Text { text: "0"; color: Theme.text-primary; font-size: 15px; horizontal-alignment: center; vertical-alignment: center; }
-                }
-                Rectangle {
-                    height: 34px;
-                    border-radius: Theme.radius-sm;
-                    background: Theme.surface;
-                    border-width: 1px;
-                    border-color: Theme.border;
-                    TouchArea { width: 100%; height: 100%; clicked => { root.pin-backspace-pressed(); } }
-                    Text { text: "<"; color: Theme.text-primary; font-size: 15px; horizontal-alignment: center; vertical-alignment: center; }
-                }
+                Key { label: "0"; clicked => { root.pin-digit-pressed(0); } }
+                Key { label: "<"; clicked => { root.pin-backspace-pressed(); } }
             }
         }
     }
 
     if root.screen == 3: VerticalLayout {
-        alignment: center;
-        padding: 16px;
-        spacing: 10px;
-        HorizontalLayout {
+        VerticalLayout {
             alignment: center;
-            spacing: 6px;
-            Icon { source: @image-url("./icons/check.svg"); color: Theme.success; size: 16px; }
-            Text {
-                text: "Ready";
-                color: Theme.success;
-                font-size: 18px;
-                font-weight: 700;
-                vertical-alignment: center;
+            padding: 8px;
+            spacing: 8px;
+            HorizontalLayout {
+                alignment: center;
+                spacing: 8px;
+                Icon { source: @image-url("./icons/check.svg"); color: Theme.success; size: 22px; }
+                Text {
+                    text: "Ready";
+                    color: Theme.success;
+                    font-size: 24px;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                }
             }
-        }
-        HorizontalLayout {
-            alignment: center;
-            spacing: 6px;
-            Icon {
-                source: @image-url("./icons/bluetooth.svg");
-                color: root.ble-connected ? Theme.success : Theme.accent;
-                size: 12px;
-            }
-            Text {
-                text: root.ble-connected ? "Connected" : "Advertising";
-                color: Theme.text-secondary;
-                font-size: 11px;
-            }
-        }
-        Text {
-            text: root.identity-pubkey-short;
-            color: Theme.text-muted;
-            font-size: 10px;
-            horizontal-alignment: center;
-            wrap: word-wrap;
-        }
-        Rectangle {
-            height: 24px;
-            TouchArea {
-                width: 100%;
-                height: 100%;
-                clicked => { root.settings-pressed(); }
+            HorizontalLayout {
+                alignment: center;
+                spacing: 6px;
+                Icon {
+                    source: @image-url("./icons/bluetooth.svg");
+                    color: root.ble-connected ? Theme.success : Theme.accent;
+                    size: 16px;
+                }
+                Text {
+                    text: root.ble-connected ? "Connected" : "Advertising";
+                    color: Theme.text-secondary;
+                    font-size: 15px;
+                    vertical-alignment: center;
+                }
             }
             Text {
-                text: "Settings";
-                color: Theme.text-disabled;
-                font-size: 10px;
+                text: root.identity-pubkey-short;
+                color: Theme.text-muted;
+                font-size: 12px;
                 horizontal-alignment: center;
-                vertical-alignment: center;
+                wrap: word-wrap;
             }
+        }
+        OutlineButton {
+            text: "Settings";
+            clicked => { root.settings-pressed(); }
         }
     }
 
     if root.screen == 4: VerticalLayout {
-        alignment: center;
-        padding: 16px;
-        spacing: 12px;
-        Text {
-            text: root.sign-amount-sats == "" ? "Confirm signature" : "Send " + root.sign-amount-sats + " sats";
-            color: Theme.accent;
-            font-size: 16px;
-            font-weight: 700;
-            horizontal-alignment: center;
+        VerticalLayout {
+            alignment: center;
+            padding: 8px;
+            spacing: 6px;
+            Text {
+                text: root.sign-amount-sats == "" ? "Confirm signature" : "Send " + root.sign-amount-sats + " sats";
+                color: Theme.accent;
+                font-size: 20px;
+                font-weight: 700;
+                horizontal-alignment: center;
+            }
+            if root.sign-amount-sats != "": Text {
+                text: root.sign-destination == "" ? "" : "to " + root.sign-destination;
+                color: Theme.text-secondary;
+                font-size: 14px;
+                horizontal-alignment: center;
+                wrap: word-wrap;
+            }
+            // Several leaves in one payment produce one prompt each; without
+            // this they look identical (see ble-hardware-signer.ts's `withSpendContext`).
+            if root.sign-amount-sats != "": Text {
+                text: "leaf " + root.sign-leaf-id-short;
+                color: Theme.text-muted;
+                font-size: 12px;
+                horizontal-alignment: center;
+                wrap: word-wrap;
+            }
+            if root.sign-amount-sats == "": Text {
+                text: "leaf " + root.sign-leaf-id-short;
+                color: Theme.text-secondary;
+                font-size: 14px;
+                horizontal-alignment: center;
+                wrap: word-wrap;
+            }
+            if root.sign-amount-sats == "": Text {
+                text: root.sign-fingerprint;
+                color: Theme.text-muted;
+                font-size: 12px;
+                horizontal-alignment: center;
+                wrap: word-wrap;
+            }
         }
-        if root.sign-amount-sats != "": Text {
-            text: root.sign-destination == "" ? "" : "to " + root.sign-destination;
-            color: Theme.text-secondary;
-            font-size: 11px;
-            horizontal-alignment: center;
-            wrap: word-wrap;
-        }
-        if root.sign-amount-sats != "": Text {
-            // Shown even with a real amount/destination -- a payment
-            // needing several leaves combined produces one prompt per
-            // leaf (see ble-hardware-signer.ts's `withSpendContext` doc
-            // comment for why this can't safely collapse to one yet).
-            // Without this, several prompts in a row look identical,
-            // which reads as "sign the same payment again?" rather than
-            // "this is a different piece of the same payment."
-            text: "leaf " + root.sign-leaf-id-short;
-            color: Theme.text-muted;
-            font-size: 10px;
-            horizontal-alignment: center;
-            wrap: word-wrap;
-        }
-        if root.sign-amount-sats == "": Text {
-            text: "leaf " + root.sign-leaf-id-short;
-            color: Theme.text-secondary;
-            font-size: 11px;
-            horizontal-alignment: center;
-            wrap: word-wrap;
-        }
-        if root.sign-amount-sats == "": Text {
-            text: root.sign-fingerprint;
-            color: Theme.text-muted;
-            font-size: 10px;
-            horizontal-alignment: center;
-            wrap: word-wrap;
-        }
-        // Side-by-side -- two 36px buttons stacked plus 2-3 text lines
-        // above overflowed the 170px screen height (same class of bug as
-        // Welcome's stacked buttons).
         HorizontalLayout {
-            spacing: 10px;
             PrimaryButton {
                 text: "Accept";
                 clicked => { root.sign-accept-pressed(); }
@@ -553,26 +444,26 @@ export component AppWindow inherits Window {
 
     if root.screen == 5: VerticalLayout {
         alignment: center;
-        padding: 16px;
+        padding: 12px;
         spacing: 10px;
         Text {
             text: "Wiped";
             color: Theme.error;
-            font-size: 18px;
+            font-size: 24px;
             font-weight: 700;
             horizontal-alignment: center;
         }
         Text {
             text: root.wiped-reason;
             color: Theme.text-secondary;
-            font-size: 11px;
+            font-size: 14px;
             horizontal-alignment: center;
             wrap: word-wrap;
         }
         Text {
             text: "Restart to create a new wallet.";
             color: Theme.text-muted;
-            font-size: 10px;
+            font-size: 13px;
             horizontal-alignment: center;
             wrap: word-wrap;
         }
@@ -580,178 +471,132 @@ export component AppWindow inherits Window {
 
     if root.screen == 6: VerticalLayout {
         alignment: center;
-        padding: 16px;
+        padding: 12px;
         Text {
             text: root.working-label;
             color: Theme.accent;
-            font-size: 14px;
+            font-size: 20px;
             horizontal-alignment: center;
         }
     }
 
     if root.screen == 7: VerticalLayout {
         alignment: center;
-        padding: 16px;
-        spacing: 12px;
+        padding: 12px;
+        spacing: 10px;
         Text {
             text: "Pairing request";
             color: Theme.text-primary;
-            font-size: 14px;
+            font-size: 18px;
+            font-weight: 700;
             horizontal-alignment: center;
         }
         Text {
             text: "Enter this code on your phone:";
             color: Theme.text-secondary;
-            font-size: 11px;
+            font-size: 14px;
             horizontal-alignment: center;
             wrap: word-wrap;
         }
         Text {
             text: root.pairing-passkey;
             color: Theme.accent;
-            font-size: 28px;
+            font-size: 40px;
             font-weight: 700;
             horizontal-alignment: center;
         }
     }
 
-    // Tight padding/spacing/button-height -- this screen has 3 children
-    // normally but 4 when `word-entry-error` is showing (a failed
-    // recovery attempt bounces back here), and the looser spacing the
-    // no-error case could afford overflowed 170px once that 4th line
-    // appeared.
+    // Full-width rows rather than `PrimaryButton`s here: the error line appears
+    // above them after a failed recovery attempt, so they must not claim extra height.
     if root.screen == 8: VerticalLayout {
-        alignment: center;
-        padding: 10px;
-        spacing: 12px;
-        Text {
-            text: "Recovery phrase length";
-            color: Theme.text-primary;
-            font-size: 14px;
-            horizontal-alignment: center;
-        }
+        Header { title: "Recovery phrase length"; }
         if root.word-entry-error != "": Text {
             text: root.word-entry-error;
             color: Theme.error;
-            font-size: 10px;
+            font-size: 12px;
             horizontal-alignment: center;
+            vertical-alignment: center;
             wrap: word-wrap;
         }
-        // Plain elements, not `PrimaryButton`, here specifically -- this
-        // is the only screen that stacks two button instances vertically
-        // (every other use of `PrimaryButton` is side-by-side in a
-        // `HorizontalLayout`); stacking the component in a `VerticalLayout`
-        // rendered the two buttons with no gap between them regardless of
-        // `spacing`'s value, while the exact same visual button built from
-        // plain elements (as the PIN pad already does) respects it. Root
-        // cause not fully chased down -- worked around by not hitting it.
-        Rectangle {
-            height: 34px;
-            border-radius: Theme.radius-md;
-            background: Theme.accent;
-            TouchArea { width: 100%; height: 100%; clicked => { root.word-count-pressed(12); } }
-            Text { text: "12 words"; color: Theme.accent-text; font-size: 14px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+        Rectangle { }
+        PrimaryButton {
+            text: "12 words";
+            clicked => { root.word-count-pressed(12); }
         }
-        Rectangle {
-            height: 34px;
-            border-radius: Theme.radius-md;
-            background: Theme.accent;
-            TouchArea { width: 100%; height: 100%; clicked => { root.word-count-pressed(24); } }
-            Text { text: "24 words"; color: Theme.accent-text; font-size: 14px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+        OutlineButton {
+            text: "24 words";
+            clicked => { root.word-count-pressed(24); }
         }
     }
 
-    // 3 rows x 9 columns = 27 cells for 26 letters (a-z); the 1 extra
-    // cell is hidden (`visible: false`) rather than omitted, so the grid
-    // stays a clean rectangle -- same `for`-inside-`Row` pattern the PIN
-    // pad (screen 2) already proved on real hardware. `letter-labels` is
-    // a fixed constant (never set from Rust) since the alphabet doesn't
-    // change; `letter-enabled`/dimming is what Rust actually drives per
-    // keystroke.
-    //
-    // Originally 5 rows x 6 columns (matching a phone-style alphabet
-    // grid), which alone was already ~142px tall -- on this 170px-tall
-    // screen, adding the progress/prefix/suggestions/backspace rows on
-    // top overflowed badly. Wider/shorter (3x9) plus folding
-    // progress+prefix+backspace into one row (instead of a full-width row
-    // each) is what actually gets this screen under budget -- confirmed
-    // on real hardware alongside the other overflow fixes in this pass.
+    // 3 rows x 9 columns = 27 cells for 26 letters; the extra cell is hidden
+    // so the grid stays rectangular. Taller layouts overflow the 170px screen.
     property <[string]> letter-labels: ["a","b","c","d","e","f","g","h","i","j","k","l","m","n","o","p","q","r","s","t","u","v","w","x","y","z"];
 
     if root.screen == 9: VerticalLayout {
-        padding: 8px;
-        spacing: 6px;
         HorizontalLayout {
-            spacing: 8px;
+            height: 32px;
             Text {
                 text: root.word-entry-progress;
                 color: Theme.text-secondary;
-                font-size: 11px;
+                font-size: 13px;
                 vertical-alignment: center;
+                horizontal-alignment: center;
+                width: 60px;
             }
             Text {
                 text: root.word-entry-prefix == "" ? "_" : root.word-entry-prefix;
                 color: Theme.accent;
-                font-size: 15px;
-                horizontal-alignment: right;
+                font-size: 20px;
+                horizontal-alignment: center;
                 vertical-alignment: center;
             }
             Rectangle {
-                width: 60px;
-                height: 22px;
-                border-radius: Theme.radius-sm;
-                background: transparent;
+                width: 64px;
+                background: del-ta.pressed ? Theme.pressed : Theme.surface;
                 border-width: 1px;
                 border-color: Theme.border;
-                TouchArea { width: 100%; height: 100%; clicked => { root.word-entry-backspace-pressed(); } }
-                Text { text: "< Del"; color: Theme.text-primary; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
+                del-ta := TouchArea { clicked => { root.word-entry-backspace-pressed(); } }
+                Text { text: "Del"; color: Theme.text-primary; font-size: 14px; horizontal-alignment: center; vertical-alignment: center; }
             }
         }
         if root.word-entry-error != "": Text {
             text: root.word-entry-error;
             color: Theme.error;
-            font-size: 9px;
+            font-size: 11px;
             horizontal-alignment: center;
             wrap: word-wrap;
         }
         HorizontalLayout {
-            alignment: center;
-            spacing: 4px;
+            height: 28px;
             for i in root.word-suggestions.length: Rectangle {
-                height: 20px;
-                border-radius: Theme.radius-sm;
-                background: Theme.surface;
-                border-width: 1px;
-                border-color: Theme.accent;
-                TouchArea { width: 100%; height: 100%; clicked => { root.suggestion-pressed(i); } }
+                background: sug-ta.pressed ? Theme.accent-pressed : Theme.accent;
+                sug-ta := TouchArea { clicked => { root.suggestion-pressed(i); } }
                 Text {
                     text: root.word-suggestions[i];
-                    color: Theme.accent;
-                    font-size: 10px;
+                    color: Theme.accent-text;
+                    font-size: 14px;
+                    font-weight: 700;
                     horizontal-alignment: center;
                     vertical-alignment: center;
                 }
             }
         }
         GridLayout {
-            spacing: 3px;
             for r in 3: Row {
                 for c in 9: Rectangle {
-                    height: 22px;
                     visible: r * 9 + c < 26;
-                    border-radius: 4px;
-                    background: Theme.surface;
+                    background: key-ta.pressed && root.letter-enabled[r * 9 + c] ? Theme.pressed : Theme.surface;
                     border-width: 1px;
-                    border-color: root.letter-enabled[r * 9 + c] ? Theme.border : Theme.surface;
-                    TouchArea {
-                        width: 100%;
-                        height: 100%;
+                    border-color: Theme.border;
+                    key-ta := TouchArea {
                         clicked => { if (root.letter-enabled[r * 9 + c]) { root.letter-pressed(r * 9 + c); } }
                     }
                     Text {
                         text: root.letter-labels[r * 9 + c];
                         color: root.letter-enabled[r * 9 + c] ? Theme.text-primary : Theme.text-disabled;
-                        font-size: 12px;
+                        font-size: 17px;
                         horizontal-alignment: center;
                         vertical-alignment: center;
                     }
@@ -761,33 +606,31 @@ export component AppWindow inherits Window {
     }
 
     if root.screen == 10: VerticalLayout {
-        alignment: center;
-        padding: 16px;
-        spacing: 12px;
-        HorizontalLayout {
+        VerticalLayout {
             alignment: center;
+            padding: 12px;
             spacing: 8px;
-            Icon { source: @image-url("./icons/warning.svg"); color: Theme.error; size: 18px; }
+            HorizontalLayout {
+                alignment: center;
+                spacing: 8px;
+                Icon { source: @image-url("./icons/warning.svg"); color: Theme.error; size: 22px; }
+                Text {
+                    text: "Factory reset";
+                    color: Theme.error;
+                    font-size: 20px;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                }
+            }
             Text {
-                text: "Factory reset";
-                color: Theme.error;
-                font-size: 16px;
-                font-weight: 700;
-                vertical-alignment: center;
+                text: "This erases the wallet on this device. Make sure you have your recovery phrase written down.";
+                color: Theme.text-secondary;
+                font-size: 14px;
+                horizontal-alignment: center;
+                wrap: word-wrap;
             }
         }
-        Text {
-            text: "This erases the wallet on this device. Make sure you have your recovery phrase written down.";
-            color: Theme.text-secondary;
-            font-size: 11px;
-            horizontal-alignment: center;
-            wrap: word-wrap;
-        }
-        // Side-by-side -- same stacked-buttons overflow class as Welcome
-        // and SignConfirm (two 36px buttons plus the warning text above
-        // didn't fit stacked in 170px).
         HorizontalLayout {
-            spacing: 10px;
             DangerButton {
                 text: "Erase and reset";
                 clicked => { root.factory-reset-confirm-pressed(); }
@@ -799,34 +642,22 @@ export component AppWindow inherits Window {
         }
     }
 
-    // First entry in what's meant to grow into a real settings list --
-    // just the confirmation toggle plus factory reset (moved here from
-    // being a direct Home-screen link) for now.
     if root.screen == 11: VerticalLayout {
-        padding: 10px;
-        spacing: 8px;
-        Text {
-            text: "Settings";
-            color: Theme.text-primary;
-            font-size: 14px;
-            font-weight: 700;
-            horizontal-alignment: center;
+        Header {
+            title: "Settings";
+            show-back: true;
+            back-clicked => { root.settings-back-pressed(); }
         }
         Rectangle {
-            height: 36px;
-            border-radius: Theme.radius-md;
-            background: Theme.surface;
+            height: Theme.button-height;
+            background: toggle-ta.pressed ? Theme.pressed : Theme.surface;
             border-width: 1px;
             border-color: Theme.border;
-            TouchArea { width: 100%; height: 100%; clicked => { root.require-confirmation-toggle-pressed(); } }
+            toggle-ta := TouchArea { clicked => { root.require-confirmation-toggle-pressed(); } }
             Text {
-                // One `Text`, whole-line colored, rather than a
-                // label+value split -- Slint's `Text` can't mix colors
-                // within itself (no rich-text spans), and this reads just
-                // as clearly on a row this size.
                 text: "Require confirmation: " + (root.require-confirmation ? "ON" : "OFF");
                 color: root.require-confirmation ? Theme.success : Theme.error;
-                font-size: 12px;
+                font-size: 16px;
                 font-weight: 700;
                 horizontal-alignment: center;
                 vertical-alignment: center;
@@ -835,53 +666,45 @@ export component AppWindow inherits Window {
         if !root.require-confirmation: Text {
             text: "Transactions will be signed automatically, with no prompt on this device.";
             color: Theme.error;
-            font-size: 9px;
+            font-size: 12px;
             horizontal-alignment: center;
+            vertical-alignment: center;
             wrap: word-wrap;
         }
-        HorizontalLayout {
-            spacing: 8px;
-            OutlineButton {
-                text: "Factory reset";
-                button-height: 32px;
-                clicked => { root.factory-reset-pressed(); }
-            }
-            OutlineButton {
-                text: "< Back";
-                button-height: 32px;
-                clicked => { root.settings-back-pressed(); }
-            }
+        Rectangle { }
+        OutlineButton {
+            text: "Factory reset";
+            clicked => { root.factory-reset-pressed(); }
         }
     }
 
-    // Gates turning confirmation OFF behind an explicit warning, mirroring
-    // FactoryResetConfirm's shape -- turning it back ON (in `on_require_
-    // confirmation_toggle_pressed`, main.rs) needs no such gate.
+    // Turning confirmation back ON (main.rs) needs no such gate.
     if root.screen == 12: VerticalLayout {
-        alignment: center;
-        padding: 16px;
-        spacing: 12px;
-        HorizontalLayout {
+        VerticalLayout {
             alignment: center;
+            padding: 12px;
             spacing: 8px;
-            Icon { source: @image-url("./icons/warning.svg"); color: Theme.error; size: 18px; }
+            HorizontalLayout {
+                alignment: center;
+                spacing: 8px;
+                Icon { source: @image-url("./icons/warning.svg"); color: Theme.error; size: 22px; }
+                Text {
+                    text: "Disable confirmation?";
+                    color: Theme.error;
+                    font-size: 20px;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                }
+            }
             Text {
-                text: "Disable confirmation?";
-                color: Theme.error;
-                font-size: 16px;
-                font-weight: 700;
-                vertical-alignment: center;
+                text: "The device will sign transactions automatically, without asking you to approve them here.";
+                color: Theme.text-secondary;
+                font-size: 14px;
+                horizontal-alignment: center;
+                wrap: word-wrap;
             }
         }
-        Text {
-            text: "The device will sign transactions automatically, without asking you to approve them here.";
-            color: Theme.text-secondary;
-            font-size: 11px;
-            horizontal-alignment: center;
-            wrap: word-wrap;
-        }
         HorizontalLayout {
-            spacing: 10px;
             DangerButton {
                 text: "Disable";
                 clicked => { root.disable-confirmation-confirm-pressed(); }
