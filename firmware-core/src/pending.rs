@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-pub const MAX_PENDING: usize = 16;
+pub const MAX_PENDING: usize = 64;
 pub const PENDING_TTL: Duration = Duration::from_secs(60);
 
 /// Bounded, expiring, take-once store: an unused FROST nonce must not linger or accumulate.
