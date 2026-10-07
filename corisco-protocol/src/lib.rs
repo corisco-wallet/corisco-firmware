@@ -138,6 +138,13 @@ pub enum KeyDerivationRef {
     Random,
 }
 
+impl KeyDerivationRef {
+    /// The only shape `SubtractSplitAndEncrypt` legitimately uses: a leaf key swapped for a fresh random one.
+    pub fn is_leaf_swap(first: &Self, second: &Self) -> bool {
+        matches!((first, second), (Self::Leaf { .. }, Self::Random))
+    }
+}
+
 /// Wire format for `corisco_crypto_core::vss::VerifiableSecretShare`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ShareWire {
@@ -156,4 +163,22 @@ pub enum Response {
     Error { message: String },
     Shares { shares: Vec<ShareWire> },
     SubtractSplitAndEncrypt { shares: Vec<ShareWire>, secret_cipher: Vec<u8> },
+}
+
+#[cfg(test)]
+mod key_derivation_tests {
+    use super::KeyDerivationRef::*;
+    use super::*;
+
+    #[test]
+    fn leaf_swap_accepts_only_leaf_then_random() {
+        let leaf = || Leaf { leaf_id: "a".into() };
+        assert!(KeyDerivationRef::is_leaf_swap(&leaf(), &Random));
+        for second in [leaf(), Deposit, StaticDeposit { idx: 0 }, Ecies { ciphertext: vec![] }] {
+            assert!(!KeyDerivationRef::is_leaf_swap(&leaf(), &second));
+        }
+        for first in [Deposit, StaticDeposit { idx: 0 }, Ecies { ciphertext: vec![] }, Random] {
+            assert!(!KeyDerivationRef::is_leaf_swap(&first, &Random));
+        }
+    }
 }
