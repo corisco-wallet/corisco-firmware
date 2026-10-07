@@ -143,6 +143,14 @@ impl KeyDerivationRef {
     pub fn is_leaf_swap(first: &Self, second: &Self) -> bool {
         matches!((first, second), (Self::Leaf { .. }, Self::Random))
     }
+
+    /// The leaf a claim takes ownership of: an incoming ECIES key tweaked onto a local leaf key.
+    pub fn claim_leaf_id<'a>(first: &Self, second: &'a Self) -> Option<&'a str> {
+        match (first, second) {
+            (Self::Ecies { .. }, Self::Leaf { leaf_id }) => Some(leaf_id),
+            _ => None,
+        }
+    }
 }
 
 /// Wire format for `corisco_crypto_core::vss::VerifiableSecretShare`.
@@ -180,5 +188,16 @@ mod key_derivation_tests {
         for first in [Deposit, StaticDeposit { idx: 0 }, Ecies { ciphertext: vec![] }, Random] {
             assert!(!KeyDerivationRef::is_leaf_swap(&first, &Random));
         }
+    }
+
+    #[test]
+    fn claim_leaf_id_requires_ecies_then_leaf() {
+        let ecies = || Ecies { ciphertext: vec![] };
+        let leaf = || Leaf { leaf_id: "a".into() };
+        assert_eq!(KeyDerivationRef::claim_leaf_id(&ecies(), &leaf()), Some("a"));
+        assert_eq!(KeyDerivationRef::claim_leaf_id(&leaf(), &leaf()), None);
+        assert_eq!(KeyDerivationRef::claim_leaf_id(&Random, &leaf()), None);
+        assert_eq!(KeyDerivationRef::claim_leaf_id(&ecies(), &Random), None);
+        assert_eq!(KeyDerivationRef::claim_leaf_id(&ecies(), &Deposit), None);
     }
 }
