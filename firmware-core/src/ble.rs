@@ -48,7 +48,7 @@
 //! no-loss delivery for free, without a bespoke ACK scheme on top.
 //! `on_notify_tx` is esp32-nimble's confirmation signal for this.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Condvar, Mutex};
@@ -63,6 +63,8 @@ use corisco_crypto_core::SparkKeyRoots;
 
 pub use corisco_protocol::{REQUEST_CHARACTERISTIC_UUID, RESPONSE_CHARACTERISTIC_UUID, SERVICE_UUID};
 use corisco_protocol::{KeyDerivationRef, Request, Response, ShareWire};
+
+use crate::pending::PendingStore;
 
 const DEFAULT_ATT_MTU: u16 = 23;
 const ATT_OVERHEAD: u16 = 3;
@@ -154,7 +156,7 @@ fn handle_request(signer: &Arc<Signer>, responder: ResponseChannel, req: Request
             amount_sats,
             destination,
         } => {
-            let Some((nonce, self_commitment)) = signer.pending_commitments.lock().unwrap().remove(&commitment_id)
+            let Some((nonce, self_commitment)) = signer.pending_commitments.lock().unwrap().take(commitment_id)
             else {
                 return Some(err(format!("unknown or already-used commitment_id: {commitment_id}")));
             };
@@ -267,7 +269,7 @@ struct RequestReassembly {
 
 struct Signer {
     roots: SparkKeyRoots,
-    pending_commitments: Mutex<HashMap<u32, (SigningNonces, SigningCommitments)>>,
+    pending_commitments: Mutex<PendingStore<(SigningNonces, SigningCommitments)>>,
     next_commitment_id: AtomicU32,
     confirm_tx: mpsc::Sender<Box<SignConfirmationRequest>>,
     work_tx: mpsc::Sender<DeferredRequest>,
@@ -492,6 +494,10 @@ pub fn run_deferred(req: DeferredRequest) {
             num_shares,
             responder,
         } => {
+            if !KeyDerivationRef::is_leaf_swap(&first, &second) {
+                responder.send(&err("SubtractSplitAndEncrypt only swaps a leaf key for a random one"));
+                return;
+            }
             let response = match (resolve_private_key(&signer.roots, &first), resolve_private_key(&signer.roots, &second)) {
                 (Ok(a), Ok(b)) => {
                     let diff = corisco_crypto_core::subtract_private_keys(&a, &b);
@@ -690,7 +696,7 @@ pub fn run(
 
     let signer = Arc::new(Signer {
         roots,
-        pending_commitments: Mutex::new(HashMap::new()),
+        pending_commitments: Mutex::new(PendingStore::new()),
         next_commitment_id: AtomicU32::new(0),
         confirm_tx,
         work_tx,
@@ -736,8 +742,10 @@ pub fn run(
     let advertising = device.get_advertising();
     {
         let status_tx = status_tx.clone();
+        let signer = signer.clone();
         server.on_disconnect(move |desc, reason| {
             info!("ble: disconnected {desc:?}: {reason:?}");
+            signer.pending_commitments.lock().unwrap().clear();
             if let Err(e) = advertising.lock().start() {
                 log::error!("ble: failed to restart advertising after disconnect: {e:?}");
             }
