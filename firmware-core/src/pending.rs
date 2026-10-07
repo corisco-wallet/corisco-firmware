@@ -48,6 +48,39 @@ impl<T> Default for PendingStore<T> {
     }
 }
 
+pub const CLAIM_AUTH_TTL: Duration = Duration::from_secs(600);
+pub const MAX_AUTHORIZED_LEAVES: usize = 64;
+
+/// Leaves the device itself saw being claimed; only these may be signed without a tap.
+#[derive(Default)]
+pub struct AuthorizedLeaves {
+    entries: HashMap<String, Instant>,
+}
+
+impl AuthorizedLeaves {
+    pub fn authorize(&mut self, leaf_id: String) {
+        self.authorize_at(Instant::now(), leaf_id);
+    }
+
+    pub fn is_authorized(&self, leaf_id: &str) -> bool {
+        self.is_authorized_at(Instant::now(), leaf_id)
+    }
+
+    fn authorize_at(&mut self, now: Instant, leaf_id: String) {
+        self.entries.retain(|_, granted| now.duration_since(*granted) < CLAIM_AUTH_TTL);
+        if self.entries.len() >= MAX_AUTHORIZED_LEAVES {
+            if let Some(oldest) = self.entries.iter().min_by_key(|(_, granted)| **granted).map(|(id, _)| id.clone()) {
+                self.entries.remove(&oldest);
+            }
+        }
+        self.entries.insert(leaf_id, now);
+    }
+
+    fn is_authorized_at(&self, now: Instant, leaf_id: &str) -> bool {
+        self.entries.get(leaf_id).is_some_and(|granted| now.duration_since(*granted) < CLAIM_AUTH_TTL)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -85,5 +118,26 @@ mod tests {
         s.insert(1, "n");
         s.clear();
         assert_eq!(s.take(1), None);
+    }
+
+    #[test]
+    fn authorization_is_per_leaf_and_expires() {
+        let mut a = AuthorizedLeaves::default();
+        let t0 = Instant::now();
+        a.authorize_at(t0, "a".into());
+        assert!(a.is_authorized_at(t0, "a"));
+        assert!(!a.is_authorized_at(t0, "b"));
+        assert!(!a.is_authorized_at(t0 + CLAIM_AUTH_TTL, "a"));
+    }
+
+    #[test]
+    fn authorization_cap_evicts_oldest() {
+        let mut a = AuthorizedLeaves::default();
+        let t0 = Instant::now();
+        for i in 0..=MAX_AUTHORIZED_LEAVES {
+            a.authorize_at(t0 + Duration::from_millis(i as u64), i.to_string());
+        }
+        assert!(!a.is_authorized_at(t0, "0"));
+        assert!(a.is_authorized_at(t0, &MAX_AUTHORIZED_LEAVES.to_string()));
     }
 }
