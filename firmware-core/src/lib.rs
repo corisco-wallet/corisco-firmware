@@ -6,6 +6,7 @@
 //! `main.rs` boot sequence -- those are each board crate's own job).
 
 pub mod ble;
+pub mod pending;
 pub mod platform;
 pub mod rng;
 pub mod selftest;
