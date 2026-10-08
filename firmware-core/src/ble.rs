@@ -265,6 +265,12 @@ struct RequestReassembly {
     buf: Vec<u8>,
 }
 
+// A nonce left in RAM after use is a key-leak risk; fail the build if a dependency bump drops wipe-on-drop.
+const _: fn() = || {
+    fn assert_zeroize_on_drop<T: zeroize::ZeroizeOnDrop>() {}
+    assert_zeroize_on_drop::<SigningNonces>();
+};
+
 struct Signer {
     roots: SparkKeyRoots,
     pending_commitments: Mutex<PendingStore<(SigningNonces, SigningCommitments)>>,
@@ -502,6 +508,10 @@ pub fn run_deferred(req: DeferredRequest) {
         } => {
             if !KeyDerivationRef::is_leaf_swap(&first, &second) {
                 responder.send(&err("SubtractSplitAndEncrypt only swaps a leaf key for a random one"));
+                return;
+            }
+            if !crate::policy::is_ssp_identity_key(&receiver_public_key) {
+                responder.send(&err("SubtractSplitAndEncrypt only encrypts to the Spark service provider"));
                 return;
             }
             let response = match (resolve_private_key(&signer.roots, &first), resolve_private_key(&signer.roots, &second)) {
