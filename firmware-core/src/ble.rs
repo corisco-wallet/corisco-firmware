@@ -265,6 +265,12 @@ struct RequestReassembly {
     buf: Vec<u8>,
 }
 
+// A nonce left in RAM after use is a key-leak risk; fail the build if a dependency bump drops wipe-on-drop.
+const _: fn() = || {
+    fn assert_zeroize_on_drop<T: zeroize::ZeroizeOnDrop>() {}
+    assert_zeroize_on_drop::<SigningNonces>();
+};
+
 struct Signer {
     roots: SparkKeyRoots,
     pending_commitments: Mutex<PendingStore<(SigningNonces, SigningCommitments)>>,

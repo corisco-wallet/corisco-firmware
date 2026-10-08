@@ -21,6 +21,7 @@ serde = { workspace = true }
 
 hex = { workspace = true }
 sha2 = { workspace = true }
+zeroize = { workspace = true }
 anyhow = { workspace = true }
 enumset = { workspace = true }
 heapless = { workspace = true }
