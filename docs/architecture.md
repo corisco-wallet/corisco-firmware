@@ -226,7 +226,7 @@ sequenceDiagram
 | `Sign` | `signFrost` round 2 | `requires_confirmation` field, app-set | `false` for claim refund-tx signatures (`withoutSpendConfirmation`); `true` for anything during a `withSpendContext` send. |
 | `GetIdentityPublicKey` / `GetDepositPublicKey` | Various SDK calls | none | Answered inline -- already-computed bytes from boot, no fresh math. |
 | `GetLeafPublicKey` | Leaf key lookups | none (auto) | Fresh BIP32 derivation, deferred but not gated -- a public key alone can't move funds. |
-| `SignSchnorrIdentity` / `SignEcdsaIdentity` | Identity-key auth (e.g. `SparkWalletClient.authenticate`) | none (auto) | Login/auth signatures, not a leaf spend. |
+| `SignSchnorrIdentity` / `SignEcdsaIdentity` | Identity-key auth (e.g. `SparkWalletClient.authenticate`) and transfer packages | on-device tap | The device only sees a digest, so it can't tell a login from a transfer; every identity signature is confirmed on the screen ("Confirm login"). Skipped only when confirmation is turned off in Settings. |
 | `SubtractAndSplitSecretWithProofs` | Claiming (`verifyPendingTransfer`'s key tweak) | none (auto) | Wrapped in `withoutSpendConfirmation` by the app. |
 | `DecryptEciesToPublicKey` | Claiming (`verifyPendingTransfer`) | none (auto) | Returns only a public key, never the decrypted private value. |
 | `SubtractSplitAndEncrypt` | Sending a non-exact-denomination payment | none (auto) | The leaf-swap key tweak itself doesn't move funds -- the `Sign` that follows it does, and that one *is* gated. |

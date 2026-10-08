@@ -153,7 +153,7 @@ fn main() -> anyhow::Result<()> {
     // `Sign` requests arrive here instead of being answered inline --
     // `ble::complete_sign` (called below, from Accept/Decline) is what
     // actually produces the response.
-    let (confirm_tx, confirm_rx) = mpsc::channel::<Box<ble::SignConfirmationRequest>>();
+    let (confirm_tx, confirm_rx) = mpsc::channel::<ble::Confirmation>();
     // `Commit`/`GetLeafPublicKey`/`SignSchnorrIdentity`/`SignEcdsaIdentity`
     // all do fresh elliptic-curve math that can't run inline in `on_write`
     // -- it overflowed the NimBLE host task's stack on real hardware (see
@@ -214,7 +214,7 @@ fn main() -> anyhow::Result<()> {
             // Holds the request currently on screen 4 (SignConfirm) --
             // `None` until one arrives, taken (and answered) when the
             // user taps Accept/Decline.
-            let pending_sign: std::rc::Rc<std::cell::RefCell<Option<Box<ble::SignConfirmationRequest>>>> =
+            let pending_sign: std::rc::Rc<std::cell::RefCell<Option<ble::Confirmation>>> =
                 std::rc::Rc::new(std::cell::RefCell::new(None));
             {
                 let pending_sign = pending_sign.clone();
@@ -222,7 +222,7 @@ fn main() -> anyhow::Result<()> {
                 ui.on_sign_accept_pressed(move || {
                     let Some(ui) = ui_weak.upgrade() else { return };
                     if let Some(req) = pending_sign.borrow_mut().take() {
-                        ble::complete_sign(req, true);
+                        ble::complete_confirmation(req, true);
                     }
                     ui.set_screen(3);
                 });
@@ -233,7 +233,7 @@ fn main() -> anyhow::Result<()> {
                 ui.on_sign_decline_pressed(move || {
                     let Some(ui) = ui_weak.upgrade() else { return };
                     if let Some(req) = pending_sign.borrow_mut().take() {
-                        ble::complete_sign(req, false);
+                        ble::complete_confirmation(req, false);
                     }
                     ui.set_screen(3);
                 });
@@ -389,17 +389,28 @@ fn main() -> anyhow::Result<()> {
                     ui.set_screen(3);
                 }
 
-                if let Ok(req) = confirm_rx.try_recv() {
-                    ui.set_sign_leaf_id_short(short_id(&req.leaf_id).into());
-                    ui.set_sign_fingerprint(fingerprint(&req.message).into());
-                    // Empty string means "not supplied" to the UI (see
-                    // app.slint's sign-amount-sats doc comment) -- falls
-                    // back to the leaf id/fingerprint view above.
-                    ui.set_sign_amount_sats(
-                        req.amount_sats.map(|a| a.to_string()).unwrap_or_default().into(),
-                    );
-                    ui.set_sign_destination(req.destination.clone().unwrap_or_default().into());
-                    *pending_sign.borrow_mut() = Some(req);
+                if let Ok(confirmation) = confirm_rx.try_recv() {
+                    match &confirmation {
+                        ble::Confirmation::Sign(req) => {
+                            ui.set_sign_is_identity(false);
+                            ui.set_sign_leaf_id_short(short_id(&req.leaf_id).into());
+                            ui.set_sign_fingerprint(fingerprint(&req.message).into());
+                            // Empty string means "not supplied" to the UI (see
+                            // app.slint's sign-amount-sats doc comment) -- falls
+                            // back to the leaf id/fingerprint view above.
+                            ui.set_sign_amount_sats(
+                                req.amount_sats.map(|a| a.to_string()).unwrap_or_default().into(),
+                            );
+                            ui.set_sign_destination(req.destination.clone().unwrap_or_default().into());
+                        }
+                        ble::Confirmation::Identity(req) => {
+                            ui.set_sign_is_identity(true);
+                            ui.set_sign_fingerprint(fingerprint(&req.message).into());
+                            ui.set_sign_amount_sats("".into());
+                            ui.set_sign_destination("".into());
+                        }
+                    }
+                    *pending_sign.borrow_mut() = Some(confirmation);
                     ui.set_screen(4);
                 }
 

@@ -109,6 +109,25 @@ fn err(message: impl std::fmt::Display) -> Response {
     Response::Error { message: message.to_string() }
 }
 
+/// Identity signatures authorize logins and transfers alike, and the device only sees a digest, so each one
+/// needs a tap unless the user turned confirmation off on the device.
+fn request_identity_signature(
+    signer: &Arc<Signer>,
+    responder: ResponseChannel,
+    message: Vec<u8>,
+    scheme: IdentityScheme,
+) -> Option<Response> {
+    let request = IdentityConfirmationRequest { signer: signer.clone(), message, scheme, responder };
+    if signer.require_confirmation.load(Ordering::Relaxed) {
+        if signer.confirm_tx.send(Confirmation::Identity(Box::new(request))).is_err() {
+            return Some(err("no confirmation receiver (UI thread gone?)"));
+        }
+    } else if signer.work_tx.send(DeferredRequest::SignIdentity { request }).is_err() {
+        return Some(err("no deferred-work receiver (main thread gone?)"));
+    }
+    None
+}
+
 /// Returns `None` for `Commit`, `Sign`, `GetLeafPublicKey`,
 /// `SignSchnorrIdentity`, and `SignEcdsaIdentity` -- every request that
 /// does *fresh* elliptic-curve computation (BIP32 derivation, FROST nonce
@@ -140,10 +159,10 @@ fn handle_request(signer: &Arc<Signer>, responder: ResponseChannel, req: Request
             return defer(DeferredRequest::GetLeafPublicKey { signer: signer.clone(), leaf_id, responder })
         }
         Request::SignSchnorrIdentity { message } => {
-            return defer(DeferredRequest::SignSchnorrIdentity { signer: signer.clone(), message, responder })
+            return request_identity_signature(signer, responder, message, IdentityScheme::Schnorr)
         }
         Request::SignEcdsaIdentity { message, compact } => {
-            return defer(DeferredRequest::SignEcdsaIdentity { signer: signer.clone(), message, compact, responder })
+            return request_identity_signature(signer, responder, message, IdentityScheme::Ecdsa { compact })
         }
         Request::Sign {
             commitment_id,
@@ -212,7 +231,7 @@ fn handle_request(signer: &Arc<Signer>, responder: ResponseChannel, req: Request
             let claim_authorized = signer.claimed_leaves.lock().unwrap().is_authorized(&confirm_req.leaf_id);
             let needs_prompt = requires_confirmation || !claim_authorized;
             if needs_prompt && signer.require_confirmation.load(Ordering::Relaxed) {
-                if signer.confirm_tx.send(confirm_req).is_err() {
+                if signer.confirm_tx.send(Confirmation::Sign(confirm_req)).is_err() {
                     return Some(err("no confirmation receiver (UI thread gone?)"));
                 }
             } else if signer.work_tx.send(DeferredRequest::AutoSign { req: confirm_req }).is_err() {
@@ -270,7 +289,7 @@ struct Signer {
     pending_commitments: Mutex<PendingStore<(SigningNonces, SigningCommitments)>>,
     next_commitment_id: AtomicU32,
     claimed_leaves: Mutex<AuthorizedLeaves>,
-    confirm_tx: mpsc::Sender<Box<SignConfirmationRequest>>,
+    confirm_tx: mpsc::Sender<Confirmation>,
     work_tx: mpsc::Sender<DeferredRequest>,
     /// Device-level override of the wire protocol's own
     /// `requires_confirmation` flag -- the Settings screen's "require
@@ -366,6 +385,55 @@ pub fn complete_sign(req: Box<SignConfirmationRequest>, accept: bool) {
     req.responder.send(&response);
 }
 
+#[derive(Clone, Copy)]
+pub enum IdentityScheme {
+    Schnorr,
+    Ecdsa { compact: bool },
+}
+
+/// An identity-key signature waiting on the on-screen confirmation gate.
+pub struct IdentityConfirmationRequest {
+    pub message: Vec<u8>,
+    scheme: IdentityScheme,
+    signer: Arc<Signer>,
+    responder: ResponseChannel,
+}
+
+/// What the confirm screen is asked to show.
+pub enum Confirmation {
+    Sign(Box<SignConfirmationRequest>),
+    Identity(Box<IdentityConfirmationRequest>),
+}
+
+/// Called from the UI thread once the user taps Accept/Decline.
+pub fn complete_confirmation(confirmation: Confirmation, accept: bool) {
+    match confirmation {
+        Confirmation::Sign(req) => complete_sign(req, accept),
+        Confirmation::Identity(req) if accept => complete_identity(*req),
+        Confirmation::Identity(req) => req.responder.send(&err("declined on device")),
+    }
+}
+
+fn complete_identity(request: IdentityConfirmationRequest) {
+    let key = &request.signer.roots.identity.private_key;
+    let response = match request.scheme {
+        IdentityScheme::Schnorr => {
+            let sig = corisco_crypto_core::sign_schnorr(key, &request.message);
+            Response::Signature { signature: sig.to_bytes().to_vec() }
+        }
+        // DER by default: spark_authn's `verify_challenge` rejects compact r||s.
+        IdentityScheme::Ecdsa { compact } => match <[u8; 32]>::try_from(request.message.as_slice()) {
+            Ok(digest) => {
+                let sig = corisco_crypto_core::sign_ecdsa_prehashed(key, &digest);
+                let signature = if compact { sig.to_bytes().to_vec() } else { sig.to_der().to_bytes().to_vec() };
+                Response::Signature { signature }
+            }
+            Err(_) => err("message must be exactly 32 bytes (a digest)"),
+        },
+    };
+    request.responder.send(&response);
+}
+
 /// A request waiting on fresh elliptic-curve computation -- deferred off
 /// `on_write`'s stack for the reason `handle_request`'s doc comment
 /// explains, just without any user-facing gate (unlike `Sign`): `run_deferred`
@@ -376,8 +444,7 @@ pub fn complete_sign(req: Box<SignConfirmationRequest>, accept: bool) {
 pub enum DeferredRequest {
     Commit { signer: Arc<Signer>, responder: ResponseChannel },
     GetLeafPublicKey { signer: Arc<Signer>, leaf_id: String, responder: ResponseChannel },
-    SignSchnorrIdentity { signer: Arc<Signer>, message: Vec<u8>, responder: ResponseChannel },
-    SignEcdsaIdentity { signer: Arc<Signer>, message: Vec<u8>, compact: bool, responder: ResponseChannel },
+    SignIdentity { request: IdentityConfirmationRequest },
     SubtractAndSplitSecretWithProofs {
         signer: Arc<Signer>,
         first: KeyDerivationRef,
@@ -435,28 +502,7 @@ pub fn run_deferred(req: DeferredRequest) {
             };
             responder.send(&response);
         }
-        DeferredRequest::SignSchnorrIdentity { signer, message, responder } => {
-            let sig = corisco_crypto_core::sign_schnorr(&signer.roots.identity.private_key, &message);
-            responder.send(&Response::Signature { signature: sig.to_bytes().to_vec() });
-        }
-        DeferredRequest::SignEcdsaIdentity { signer, message, compact, responder } => {
-            // DER by default (`compact: false`): the SDK's own auth flow
-            // (`SparkWalletClient.authenticate` -> `signMessageWithIdentityKey(hash)`,
-            // no `compact` arg) sends the result straight to spark_authn's
-            // `verify_challenge`, which expects ASN.1 DER and rejects a
-            // compact r||s signature. `k256`'s `ecdsa-core` dependency
-            // already enables its `der` feature unconditionally, so
-            // `to_der()` needs no new dependency here.
-            let response = match <[u8; 32]>::try_from(message.as_slice()) {
-                Ok(digest) => {
-                    let sig = corisco_crypto_core::sign_ecdsa_prehashed(&signer.roots.identity.private_key, &digest);
-                    let signature = if compact { sig.to_bytes().to_vec() } else { sig.to_der().to_bytes().to_vec() };
-                    Response::Signature { signature }
-                }
-                Err(_) => err("message must be exactly 32 bytes (a digest)"),
-            };
-            responder.send(&response);
-        }
+        DeferredRequest::SignIdentity { request } => complete_identity(request),
         DeferredRequest::SubtractAndSplitSecretWithProofs { signer, first, second, threshold, num_shares, responder } => {
             let Some(claimed_leaf_id) = KeyDerivationRef::claim_leaf_id(&first, &second).map(str::to_owned) else {
                 responder.send(&err("SubtractAndSplitSecretWithProofs only tweaks an incoming key onto a leaf"));
@@ -685,7 +731,7 @@ pub enum BleStatus {
 pub fn run(
     roots: SparkKeyRoots,
     passkey_tx: mpsc::Sender<PasskeyDisplay>,
-    confirm_tx: mpsc::Sender<Box<SignConfirmationRequest>>,
+    confirm_tx: mpsc::Sender<Confirmation>,
     work_tx: mpsc::Sender<DeferredRequest>,
     status_tx: mpsc::Sender<BleStatus>,
     require_confirmation: Arc<AtomicBool>,

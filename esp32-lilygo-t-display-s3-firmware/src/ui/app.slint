@@ -197,6 +197,7 @@ export component AppWindow inherits Window {
     // only carries a sighash). Empty when the app didn't supply them.
     in property <string> sign-amount-sats: "";
     in property <string> sign-destination: "";
+    in property <bool> sign-is-identity: false;
 
     in property <string> wiped-reason: "";
 
@@ -408,7 +409,7 @@ export component AppWindow inherits Window {
             padding: 8px;
             spacing: 6px;
             Text {
-                text: root.sign-amount-sats == "" ? "Confirm signature" : "Send " + root.sign-amount-sats + " sats";
+                text: root.sign-is-identity ? "Confirm login" : root.sign-amount-sats == "" ? "Confirm signature" : "Send " + root.sign-amount-sats + " sats";
                 color: Theme.accent;
                 font-size: 20px;
                 font-weight: 700;
@@ -423,14 +424,21 @@ export component AppWindow inherits Window {
             }
             // Several leaves in one payment produce one prompt each; without
             // this they look identical (see ble-hardware-signer.ts's `withSpendContext`).
-            if root.sign-amount-sats != "": Text {
+            if !root.sign-is-identity && root.sign-amount-sats != "": Text {
                 text: "leaf " + root.sign-leaf-id-short;
                 color: Theme.text-muted;
                 font-size: 12px;
                 horizontal-alignment: center;
                 wrap: word-wrap;
             }
-            if root.sign-amount-sats == "": Text {
+            if root.sign-is-identity: Text {
+                text: "Identity signature for login or a transfer";
+                color: Theme.text-secondary;
+                font-size: 14px;
+                horizontal-alignment: center;
+                wrap: word-wrap;
+            }
+            if !root.sign-is-identity && root.sign-amount-sats == "": Text {
                 text: "leaf " + root.sign-leaf-id-short;
                 color: Theme.text-secondary;
                 font-size: 14px;
