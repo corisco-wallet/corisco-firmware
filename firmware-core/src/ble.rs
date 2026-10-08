@@ -510,6 +510,10 @@ pub fn run_deferred(req: DeferredRequest) {
                 responder.send(&err("SubtractSplitAndEncrypt only swaps a leaf key for a random one"));
                 return;
             }
+            if !crate::policy::is_ssp_identity_key(&receiver_public_key) {
+                responder.send(&err("SubtractSplitAndEncrypt only encrypts to the Spark service provider"));
+                return;
+            }
             let response = match (resolve_private_key(&signer.roots, &first), resolve_private_key(&signer.roots, &second)) {
                 (Ok(a), Ok(b)) => {
                     let diff = corisco_crypto_core::subtract_private_keys(&a, &b);
