@@ -5,12 +5,25 @@
 
 use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvs, NvsDefault};
 use esp_idf_svc::sys::EspError;
-use corisco_crypto_core::seed_lock::EncryptedSeed;
+use corisco_crypto_core::seed_lock::{self, EncryptedSeed};
+use zeroize::Zeroize;
+
+use crate::{device_key, rng};
 
 const NAMESPACE: &str = "signer";
 const KEY_SEED_BLOB: &str = "seed_blob";
 const KEY_FAIL_COUNT: &str = "fail_count";
 const KEY_REQUIRE_CONFIRMATION: &str = "req_confirm";
+const KEY_DEVICE_BOUND: &str = "seed_bound";
+
+pub enum Unlock {
+    Seed([u8; 64]),
+    WrongPin,
+    NoWallet,
+    /// The seed was sealed with an eFuse-derived secret this board does not have.
+    DeviceKeyMissing,
+    Storage(EspError),
+}
 
 /// Lockout threshold: the encrypted seed is wiped after this many
 /// consecutive wrong-PIN attempts (Ledger/Trezor-style).
@@ -57,13 +70,57 @@ impl Storage {
         Ok(self.nvs.blob_len(KEY_SEED_BLOB)?.is_some())
     }
 
-    pub fn store(&self, enc: &EncryptedSeed) -> Result<(), EspError> {
-        self.nvs.set_blob(KEY_SEED_BLOB, &encode(enc))?;
+    /// Seals the seed under the PIN, plus the device secret when the board has one.
+    pub fn store(&self, seed: &[u8; 64], pin: &str) -> Result<(), EspError> {
+        let mut secret = device_key::secret();
+        let enc = seed_lock::encrypt_seed_bound(
+            seed,
+            pin,
+            secret.as_ref(),
+            rng::random_salt_16(),
+            rng::random_nonce_12(),
+        );
+        let bound = secret.is_some();
+        secret.zeroize();
+        self.nvs.set_blob(KEY_SEED_BLOB, &encode(&enc))?;
+        self.nvs.set_u8(KEY_DEVICE_BOUND, bound as u8)?;
         self.reset_failures()?;
         Ok(())
     }
 
-    pub fn load(&self) -> Result<Option<EncryptedSeed>, EspError> {
+    /// Decrypts the stored seed. A legacy unbound seed is re-sealed with the
+    /// device secret on the first successful unlock once the board has one.
+    pub fn unlock(&self, pin: &str) -> Unlock {
+        let enc = match self.load() {
+            Ok(Some(enc)) => enc,
+            Ok(None) => return Unlock::NoWallet,
+            Err(e) => return Unlock::Storage(e),
+        };
+        let bound = match self.nvs.get_u8(KEY_DEVICE_BOUND) {
+            Ok(v) => v.unwrap_or(0) != 0,
+            Err(e) => return Unlock::Storage(e),
+        };
+        let mut secret = device_key::secret();
+        if bound && secret.is_none() {
+            return Unlock::DeviceKeyMissing;
+        }
+        let result = seed_lock::decrypt_seed_bound(&enc, pin, secret.as_ref().filter(|_| bound));
+        let upgrade = !bound && secret.is_some();
+        secret.zeroize();
+        match result {
+            Ok(seed) => {
+                if upgrade {
+                    if let Err(e) = self.store(&seed, pin) {
+                        log::warn!("storage: re-sealing with the device secret failed: {e:?}");
+                    }
+                }
+                Unlock::Seed(seed)
+            }
+            Err(_) => Unlock::WrongPin,
+        }
+    }
+
+    fn load(&self) -> Result<Option<EncryptedSeed>, EspError> {
         let Some(len) = self.nvs.blob_len(KEY_SEED_BLOB)? else {
             return Ok(None);
         };
@@ -112,6 +169,7 @@ impl Storage {
     /// silently inheriting a previous owner's relaxed settings.
     pub fn wipe(&self) -> Result<(), EspError> {
         self.nvs.remove(KEY_SEED_BLOB)?;
+        self.nvs.remove(KEY_DEVICE_BOUND)?;
         self.nvs.remove(KEY_FAIL_COUNT)?;
         self.nvs.remove(KEY_REQUIRE_CONFIRMATION)?;
         Ok(())

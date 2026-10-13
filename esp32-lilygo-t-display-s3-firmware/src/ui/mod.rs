@@ -36,9 +36,9 @@
 use crate::display::Display;
 use crate::touch::Touch;
 use crate::AppWindow;
-use firmware_core::storage::{Storage, MAX_PIN_ATTEMPTS};
+use firmware_core::storage::{Storage, Unlock, MAX_PIN_ATTEMPTS};
 use firmware_core::{ble, platform, rng};
-use corisco_crypto_core::{mnemonic_gen, seed_lock};
+use corisco_crypto_core::mnemonic_gen;
 use slint::platform::software_renderer::MinimalSoftwareWindow;
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 use std::cell::RefCell;
@@ -251,9 +251,9 @@ fn run_pending_work(ui: &AppWindow, stage: Stage, storage: &Storage) -> Stage {
         }
         Stage::PendingEncrypt { seed, pin } => {
             let t0 = Instant::now();
-            let enc = seed_lock::encrypt_seed_with_randomness(&seed, &pin, rng::random_salt_16(), rng::random_nonce_12());
-            log::info!("ui: encrypt_seed_with_randomness took {:?}", t0.elapsed());
-            match storage.store(&enc) {
+            let stored = storage.store(&seed, &pin);
+            log::info!("ui: storage.store took {:?}", t0.elapsed());
+            match stored {
                 Ok(()) => Stage::Done(seed),
                 Err(e) => {
                     log::error!("ui: storage.store failed: {e:?}");
@@ -262,46 +262,49 @@ fn run_pending_work(ui: &AppWindow, stage: Stage, storage: &Storage) -> Stage {
                 }
             }
         }
-        Stage::PendingDecrypt { pin } => match storage.load() {
-            Ok(Some(enc)) => {
-                let t0 = Instant::now();
-                let result = seed_lock::decrypt_seed(&enc, &pin);
-                log::info!("ui: decrypt_seed took {:?}", t0.elapsed());
-                match result {
-                    Ok(seed) => {
-                        let _ = storage.reset_failures();
-                        Stage::Done(seed)
+        Stage::PendingDecrypt { pin } => {
+            let t0 = Instant::now();
+            let unlocked = storage.unlock(&pin);
+            log::info!("ui: storage.unlock took {:?}", t0.elapsed());
+            match unlocked {
+                Unlock::Seed(seed) => {
+                    let _ = storage.reset_failures();
+                    Stage::Done(seed)
+                }
+                Unlock::WrongPin => match storage.record_failure() {
+                    Ok(count) if count >= MAX_PIN_ATTEMPTS => {
+                        if let Err(e) = storage.wipe() {
+                            log::error!("ui: storage.wipe failed: {e:?}");
+                        }
+                        Stage::Wiped
                     }
-                    Err(_) => match storage.record_failure() {
-                        Ok(count) if count >= MAX_PIN_ATTEMPTS => {
-                            if let Err(e) = storage.wipe() {
-                                log::error!("ui: storage.wipe failed: {e:?}");
-                            }
-                            Stage::Wiped
-                        }
-                        Ok(count) => {
-                            ui.set_pin_error(format!("Wrong PIN, {} attempts left", MAX_PIN_ATTEMPTS - count).into());
-                            Stage::Unlock
-                        }
-                        Err(e) => {
-                            log::error!("ui: storage.record_failure failed: {e:?}");
-                            ui.set_pin_error("Storage error, try again".into());
-                            Stage::Unlock
-                        }
-                    },
+                    Ok(count) => {
+                        ui.set_pin_error(format!("Wrong PIN, {} attempts left", MAX_PIN_ATTEMPTS - count).into());
+                        Stage::Unlock
+                    }
+                    Err(e) => {
+                        log::error!("ui: storage.record_failure failed: {e:?}");
+                        ui.set_pin_error("Storage error, try again".into());
+                        Stage::Unlock
+                    }
+                },
+                Unlock::NoWallet => {
+                    log::error!("ui: Unlock reached with no stored seed blob");
+                    ui.set_pin_error("No wallet found".into());
+                    Stage::Unlock
+                }
+                Unlock::DeviceKeyMissing => {
+                    log::error!("ui: seed is bound to a device key this board lacks");
+                    ui.set_pin_error("Device key missing".into());
+                    Stage::Unlock
+                }
+                Unlock::Storage(e) => {
+                    log::error!("ui: storage.unlock failed: {e:?}");
+                    ui.set_pin_error("Storage error, try again".into());
+                    Stage::Unlock
                 }
             }
-            Ok(None) => {
-                log::error!("ui: Unlock reached with no stored seed blob");
-                ui.set_pin_error("No wallet found".into());
-                Stage::Unlock
-            }
-            Err(e) => {
-                log::error!("ui: storage.load failed: {e:?}");
-                ui.set_pin_error("Storage error, try again".into());
-                Stage::Unlock
-            }
-        },
+        }
         Stage::PendingValidateRecovery { words } => match mnemonic_gen::parse_mnemonic(&words) {
             Ok(mnemonic) => {
                 let t0 = Instant::now();
