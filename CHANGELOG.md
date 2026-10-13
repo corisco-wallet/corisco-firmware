@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2](https://github.com/corisco-wallet/corisco-firmware/compare/v0.1.1...v0.1.2) - 2026-10-13
+
+### Fixed
+
+- *(firmware)* default-deny signing and restrict key tweaks ([#10](https://github.com/corisco-wallet/corisco-firmware/pull/10))
+
+### Other
+
+- simplify readme for first-time users ([#16](https://github.com/corisco-wallet/corisco-firmware/pull/16))
+
+## [0.1.1](https://github.com/corisco-wallet/corisco-firmware/compare/v0.1.0...v0.1.1) - 2026-10-13
+
+### Fixed
+
+- *(firmware)* default-deny signing and restrict key tweaks ([#10](https://github.com/corisco-wallet/corisco-firmware/pull/10))
+
+## [0.1.1](https://github.com/corisco-wallet/corisco-firmware/compare/v0.1.0...v0.1.1) - 2026-10-13
+
+### Fixed
+
+- *(firmware)* default-deny signing and restrict key tweaks ([#10](https://github.com/corisco-wallet/corisco-firmware/pull/10))
+
 ## [0.1.1](https://github.com/corisco-wallet/corisco-firmware/compare/v0.1.0...v0.1.1) - 2026-10-06
 
 ### Added
