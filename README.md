@@ -1,15 +1,37 @@
-# corisco-firmware
+# Corisco firmware
 
-A self-custodial Lightning wallet where the private keys never touch your
-phone: a small ESP32-S3 hardware device holds the keys and signs every
-transaction after you confirm it on the device's own screen. The phone
-app (Corisco) talks to the device over Bluetooth LE and never sees key
-material, only public keys and signature shares.
+<p align="center">
+  <img src="https://raw.githubusercontent.com/corisco-wallet/.github/main/profile/images/firmware-esp-screen.jpg" height="420" alt="Corisco hardware signer">
+</p>
+
+The firmware for Corisco, a self-custodial Lightning wallet whose keys live
+on a small ESP32-S3 device instead of your phone. Every payment is
+confirmed on the device's own screen, and the keys never leave it.
 
 Built on [Spark](https://www.spark.money/)'s FROST-based threshold
 signing protocol.
 
-## How it fits together
+## Try it
+
+You need a [LilyGo T-Display-S3](https://github.com/Xinyuan-LilyGO/T-Display-S3),
+a USB data cable and [Rust](https://rustup.rs) (only to install the flashing tool).
+
+1. Download `esp32-lilygo-t-display-s3-firmware-*.bin` (the one without `-app`) from the [latest release](https://github.com/corisco-wallet/corisco-firmware/releases/latest).
+2. Plug in the device and flash it:
+
+   ```bash
+   cargo install espflash
+   espflash write-bin 0x0 esp32-lilygo-t-display-s3-firmware-*.bin
+   espflash reset
+   ```
+
+3. On the device, create a wallet and set a PIN. **Write down your recovery words.**
+4. Install the [Corisco app](https://github.com/corisco-wallet/corisco-android-app/releases/latest) and pair with `Corisco-<id>`.
+
+To update a device that already has a wallet, see [updating](esp32-lilygo-t-display-s3-firmware/README.md#updating).
+To try a payment without real funds, see [`docs/testing.md`](docs/testing.md).
+
+## How it works
 
 ```mermaid
 flowchart LR
@@ -39,7 +61,7 @@ signing logic itself lives in a separate crate,
 See [`docs/architecture.md`](docs/architecture.md) for the full
 receive/send/sign walkthrough, request by request.
 
-## Repo layout
+## For developers
 
 | Path | What |
 |---|---|
@@ -47,30 +69,9 @@ receive/send/sign walkthrough, request by request.
 | `esp32-lilygo-t-display-s3-firmware/` | Rust firmware for the LilyGo T-Display-S3: display/touch drivers, on-device confirmation UI, boot sequence -- depends on `firmware-core` |
 | `corisco-protocol/` | BLE wire protocol (postcard `Request`/`Response`, UUIDs, `PROTOCOL_VERSION`); host-buildable, no ESP deps |
 | `protocol/` | `vectors.json`: golden wire vectors the mobile app is tested against |
-| `docs/` | Architecture walkthrough and dev/test-wallet notes |
+| `docs/` | Architecture walkthrough and test-wallet notes |
 
-The mobile app lives in its own repo,
-[corisco-android-app](https://github.com/corisco-wallet/corisco-android-app), and is tested against the wire-protocol
-vectors published with each firmware release.
-
-The firmware crates are members of one Cargo workspace rooted at the repo
-root (see `Cargo.toml`).
-
-## Quickstart
-
-- **Firmware**: see
-  [`esp32-lilygo-t-display-s3-firmware/README.md`](esp32-lilygo-t-display-s3-firmware/README.md)
-  for hardware prerequisites, the Xtensa toolchain setup, and flashing.
-- **Mobile app**: see the [corisco-android-app repo](https://github.com/corisco-wallet/corisco-android-app) for building
-  and running the Android app.
-- **Testing end to end**: [`docs/testing.md`](docs/testing.md) has two
-  ready-made regtest wallets for exercising a real payment.
-
-## Hardware
-
-A [LilyGo T-Display-S3](https://github.com/Xinyuan-LilyGO/T-Display-S3)
-(ESP32-S3, 170x320 ST7789 display, CST816S capacitive touch). No other
-hardware variant is currently supported.
+Build instructions: [`esp32-lilygo-t-display-s3-firmware/README.md`](esp32-lilygo-t-display-s3-firmware/README.md#build-from-source).
 
 ## Contributing
 
