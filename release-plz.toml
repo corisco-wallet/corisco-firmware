@@ -21,8 +21,8 @@ changelog_include = ["firmware-core", "corisco-protocol"]
 
 [[package]]
 name = "firmware-core"
-release = false
+changelog_update = false
 
 [[package]]
 name = "corisco-protocol"
-release = false
+changelog_update = false
