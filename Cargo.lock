@@ -1780,6 +1780,7 @@ dependencies = [
  "serde",
  "sha2",
  "slint",
+ "zeroize",
 ]
 
 [[package]]

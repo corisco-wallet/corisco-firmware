@@ -48,7 +48,7 @@
 //! no-loss delivery for free, without a bespoke ACK scheme on top.
 //! `on_notify_tx` is esp32-nimble's confirmation signal for this.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Condvar, Mutex};
@@ -63,6 +63,8 @@ use corisco_crypto_core::SparkKeyRoots;
 
 pub use corisco_protocol::{REQUEST_CHARACTERISTIC_UUID, RESPONSE_CHARACTERISTIC_UUID, SERVICE_UUID};
 use corisco_protocol::{KeyDerivationRef, Request, Response, ShareWire};
+
+use crate::pending::{AuthorizedLeaves, PendingStore};
 
 const DEFAULT_ATT_MTU: u16 = 23;
 const ATT_OVERHEAD: u16 = 3;
@@ -154,7 +156,7 @@ fn handle_request(signer: &Arc<Signer>, responder: ResponseChannel, req: Request
             amount_sats,
             destination,
         } => {
-            let Some((nonce, self_commitment)) = signer.pending_commitments.lock().unwrap().remove(&commitment_id)
+            let Some((nonce, self_commitment)) = signer.pending_commitments.lock().unwrap().take(commitment_id)
             else {
                 return Some(err(format!("unknown or already-used commitment_id: {commitment_id}")));
             };
@@ -204,14 +206,12 @@ fn handle_request(signer: &Arc<Signer>, responder: ResponseChannel, req: Request
                 destination,
                 responder,
             });
-            // The device-level "require confirmation" setting is a hard
-            // override, not an additional opt-in the app has to ask for:
-            // when the user has turned it off on-device, every `Sign`
-            // auto-signs regardless of what `requires_confirmation` on the
-            // wire said, precisely because that flag is app-asserted and
-            // this device-side toggle is the one thing that isn't (see
-            // Signer.require_confirmation's own doc comment).
-            if requires_confirmation && signer.require_confirmation.load(Ordering::Relaxed) {
+            // Default deny: only a leaf this device saw being claimed may skip the prompt, and the
+            // phone's flag can only add a prompt, never remove one. The Settings toggle still
+            // overrides everything when the user has turned confirmation off on-device.
+            let claim_authorized = signer.claimed_leaves.lock().unwrap().is_authorized(&confirm_req.leaf_id);
+            let needs_prompt = requires_confirmation || !claim_authorized;
+            if needs_prompt && signer.require_confirmation.load(Ordering::Relaxed) {
                 if signer.confirm_tx.send(confirm_req).is_err() {
                     return Some(err("no confirmation receiver (UI thread gone?)"));
                 }
@@ -265,10 +265,17 @@ struct RequestReassembly {
     buf: Vec<u8>,
 }
 
+// A nonce left in RAM after use is a key-leak risk; fail the build if a dependency bump drops wipe-on-drop.
+const _: fn() = || {
+    fn assert_zeroize_on_drop<T: zeroize::ZeroizeOnDrop>() {}
+    assert_zeroize_on_drop::<SigningNonces>();
+};
+
 struct Signer {
     roots: SparkKeyRoots,
-    pending_commitments: Mutex<HashMap<u32, (SigningNonces, SigningCommitments)>>,
+    pending_commitments: Mutex<PendingStore<(SigningNonces, SigningCommitments)>>,
     next_commitment_id: AtomicU32,
+    claimed_leaves: Mutex<AuthorizedLeaves>,
     confirm_tx: mpsc::Sender<Box<SignConfirmationRequest>>,
     work_tx: mpsc::Sender<DeferredRequest>,
     /// Device-level override of the wire protocol's own
@@ -457,11 +464,18 @@ pub fn run_deferred(req: DeferredRequest) {
             responder.send(&response);
         }
         DeferredRequest::SubtractAndSplitSecretWithProofs { signer, first, second, threshold, num_shares, responder } => {
+            let Some(claimed_leaf_id) = KeyDerivationRef::claim_leaf_id(&first, &second).map(str::to_owned) else {
+                responder.send(&err("SubtractAndSplitSecretWithProofs only tweaks an incoming key onto a leaf"));
+                return;
+            };
             let response = match (resolve_private_key(&signer.roots, &first), resolve_private_key(&signer.roots, &second)) {
                 (Ok(a), Ok(b)) => {
                     let diff = corisco_crypto_core::subtract_private_keys(&a, &b);
                     match corisco_crypto_core::vss::split_secret_with_proofs(&diff, threshold as usize, num_shares as usize) {
-                        Ok(shares) => Response::Shares { shares: shares.into_iter().map(share_wire).collect() },
+                        Ok(shares) => {
+                            signer.claimed_leaves.lock().unwrap().authorize(claimed_leaf_id);
+                            Response::Shares { shares: shares.into_iter().map(share_wire).collect() }
+                        }
                         Err(e) => err(e),
                     }
                 }
@@ -492,6 +506,14 @@ pub fn run_deferred(req: DeferredRequest) {
             num_shares,
             responder,
         } => {
+            if !KeyDerivationRef::is_leaf_swap(&first, &second) {
+                responder.send(&err("SubtractSplitAndEncrypt only swaps a leaf key for a random one"));
+                return;
+            }
+            if !crate::policy::is_ssp_identity_key(&receiver_public_key) {
+                responder.send(&err("SubtractSplitAndEncrypt only encrypts to the Spark service provider"));
+                return;
+            }
             let response = match (resolve_private_key(&signer.roots, &first), resolve_private_key(&signer.roots, &second)) {
                 (Ok(a), Ok(b)) => {
                     let diff = corisco_crypto_core::subtract_private_keys(&a, &b);
@@ -690,8 +712,9 @@ pub fn run(
 
     let signer = Arc::new(Signer {
         roots,
-        pending_commitments: Mutex::new(HashMap::new()),
+        pending_commitments: Mutex::new(PendingStore::new()),
         next_commitment_id: AtomicU32::new(0),
+        claimed_leaves: Mutex::new(AuthorizedLeaves::default()),
         confirm_tx,
         work_tx,
         require_confirmation,
@@ -736,8 +759,10 @@ pub fn run(
     let advertising = device.get_advertising();
     {
         let status_tx = status_tx.clone();
+        let signer = signer.clone();
         server.on_disconnect(move |desc, reason| {
             info!("ble: disconnected {desc:?}: {reason:?}");
+            signer.pending_commitments.lock().unwrap().clear();
             if let Err(e) = advertising.lock().start() {
                 log::error!("ble: failed to restart advertising after disconnect: {e:?}");
             }
