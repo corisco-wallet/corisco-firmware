@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2](https://github.com/corisco-wallet/corisco-firmware/compare/v0.1.1...v0.1.2) - 2026-10-16
+
+### Other
+
+- updated the following local packages: corisco-protocol
+
+## [0.1.3](https://github.com/corisco-wallet/corisco-firmware/compare/v0.1.2...v0.1.3) - 2026-10-16
+
+### Other
+
+- describe default-deny confirmation and simplify architecture ([#18](https://github.com/corisco-wallet/corisco-firmware/pull/18))
+
+## [0.1.2](https://github.com/corisco-wallet/corisco-firmware/compare/v0.1.1...v0.1.2) - 2026-10-16
+
+### Other
+
+- describe default-deny confirmation and simplify architecture ([#18](https://github.com/corisco-wallet/corisco-firmware/pull/18))
+
 ## [0.1.2](https://github.com/corisco-wallet/corisco-firmware/compare/v0.1.1...v0.1.2) - 2026-10-13
 
 ### Fixed
