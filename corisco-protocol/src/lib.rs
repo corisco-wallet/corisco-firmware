@@ -52,19 +52,9 @@ pub enum Request {
         /// Present for Lightning payments that need a leaf swap first -- see
         /// `corisco_crypto_core::frost::frost_sign`'s doc comment.
         adaptor_public_key: Option<Vec<u8>>,
-        /// `false` for the refund-transaction signatures a claim needs
-        /// (internal statechain protocol plumbing -- a safety mechanism
-        /// letting the new leaf owner unilaterally exit if operators go
-        /// dark, not a transfer of value to anyone), `true` for a signature
-        /// that actually spends/moves a leaf's value. Real hardware wallets
-        /// don't ask you to confirm internal protocol plumbing, only real
-        /// spends -- this field is what lets this one do the same. The app
-        /// sets this from its own call-site context (see
-        /// `ble-hardware-signer.ts`'s `withoutSpendConfirmation`), not from
-        /// anything the device can infer on its own -- the wire protocol
-        /// has no reliable way to distinguish "signing away my leaf" from
-        /// "signing a refund tx for a leaf I'm keeping" from the message
-        /// bytes alone.
+        /// `true` for a signature that spends a leaf, `false` for claim refund-tx signatures.
+        /// `false` cannot skip the prompt on its own: the device also requires that it saw the
+        /// leaf being claimed, and prompts otherwise.
         requires_confirmation: bool,
         /// App-asserted payment context for the confirm screen -- NOT
         /// independently verified against `message`, which is already a
