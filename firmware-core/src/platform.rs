@@ -133,7 +133,6 @@ pub fn dispatch_touch<T: TouchDriver>(window: &MinimalSoftwareWindow, touch: &mu
             let event = if last_position.is_some() {
                 WindowEvent::PointerMoved { position }
             } else {
-                log::info!("platform: PointerPressed at {position:?}");
                 WindowEvent::PointerPressed { position, button: PointerEventButton::Left }
             };
             window.dispatch_event(event);
@@ -141,7 +140,6 @@ pub fn dispatch_touch<T: TouchDriver>(window: &MinimalSoftwareWindow, touch: &mu
         }
         None => {
             if let Some(position) = last_position.take() {
-                log::info!("platform: PointerReleased at {position:?}");
                 window.dispatch_event(WindowEvent::PointerReleased { position, button: PointerEventButton::Left });
                 window.dispatch_event(WindowEvent::PointerExited);
             }
