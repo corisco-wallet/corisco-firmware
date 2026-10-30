@@ -1,46 +1,23 @@
-//! Bridges Slint's software renderer to a board's own display/touch
-//! drivers, via the `DisplayDriver`/`TouchDriver` traits below -- this
-//! module has no board-specific code of its own (see README.md).
-//!
-//! No `std` feature on the `slint` crate here (see Cargo.toml's comment on
-//! why: it unconditionally cascades into a `memmap2` dependency that
-//! doesn't build on this target's minimal libc). Without `std`,
-//! `Platform::duration_since_start` has no default implementation and
-//! must be provided -- backed by `esp_timer_get_time()`, the same clock
-//! source already used elsewhere in this codebase (`selftest.rs`'s
-//! benchmark timing, `ble.rs`'s self-test).
-//!
-//! This crate also doesn't implement `Platform::run_event_loop` --
-//! `slint::platform::set_platform` is called once, but nothing calls
-//! `.run()`/`run_event_loop()`. Instead each board's main/UI thread drives
-//! its own loop (render + poll touch + check the BLE confirmation channel),
-//! calling `render_frame` each iteration, rather than handing control to
-//! Slint.
+//! Glue between Slint's software renderer and a board's display/touch drivers. Boards run their
+//! own loop around `render_frame`/`dispatch_touch` instead of Slint's event loop.
 
 use slint::platform::software_renderer::{LineBufferProvider, MinimalSoftwareWindow, Rgb565Pixel};
 use slint::platform::{Platform, PointerEventButton, WindowAdapter, WindowEvent};
 use slint::{LogicalPosition, PhysicalSize, PlatformError};
 use std::rc::Rc;
 
-/// What `render_frame` needs from a board's display driver: push one
-/// horizontal strip of RGB565 pixels to the panel. Implemented by each
-/// board's own `display::Display` (e.g.
-/// `esp32-lilygo-t-display-s3-firmware`'s ST7789V driver).
+/// A board's display: pushes RGB565 pixels into a rectangle.
 pub trait DisplayDriver {
     fn draw_bitmap(&self, x0: u16, y0: u16, x1: u16, y1: u16, pixels: &[u16]) -> anyhow::Result<()>;
 }
 
-/// A single touch reading, in the board's own logical (post-rotation)
-/// coordinate space -- whatever that board's `touch::Touch::poll` already
-/// remaps raw panel coordinates into.
+/// A touch point in the board's logical (post-rotation) coordinates.
 pub struct TouchEvent {
     pub x: i32,
     pub y: i32,
 }
 
-/// What `dispatch_touch` needs from a board's touch driver. Implemented by
-/// each board's own `touch::Touch` (e.g.
-/// `esp32-lilygo-t-display-s3-firmware`'s CST816S driver).
+/// A board's touch controller.
 pub trait TouchDriver {
     fn poll(&mut self) -> Option<TouchEvent>;
 }
@@ -50,12 +27,7 @@ pub struct EspPlatform {
 }
 
 impl EspPlatform {
-    /// Registers itself as the active Slint platform (`slint::platform::set_platform`
-    /// panics if called more than once per process, matching Slint's own
-    /// contract -- fine here, this only ever runs once at boot). Returns
-    /// the window handle the caller needs for `render_frame`/`dispatch_touch`.
-    /// `width`/`height` are the board's own panel resolution (its
-    /// `display` module's own `WIDTH`/`HEIGHT` constants).
+    /// Registers the Slint platform (once per process) and returns its window.
     pub fn init(width: u16, height: u16) -> Rc<MinimalSoftwareWindow> {
         let window = MinimalSoftwareWindow::new(slint::platform::software_renderer::RepaintBufferType::ReusedBuffer);
         window.set_size(PhysicalSize::new(width as u32, height as u32));
@@ -72,20 +44,14 @@ impl Platform for EspPlatform {
         Ok(self.window.clone())
     }
 
+    // Has no default implementation without slint's "std" feature.
     fn duration_since_start(&self) -> core::time::Duration {
         let us = unsafe { esp_idf_svc::sys::esp_timer_get_time() };
         core::time::Duration::from_micros(us.max(0) as u64)
     }
 }
 
-/// Renders one frame if Slint has a pending redraw, pushing each dirty
-/// line straight to `display` -- see `LineBufferProvider`'s own doc
-/// example in `i-slint-renderer-software`, which this mirrors closely.
-///
-/// Per-line `draw_bitmap` calls (rather than batching several lines into
-/// one DMA transfer, which a `DisplayDriver` could support) -- simplest
-/// correct thing for this phase's milestone; revisit if full-screen
-/// redraws turn out too slow once there's real UI to judge that against.
+/// Renders a pending frame line by line straight to `display`.
 pub fn render_frame<D: DisplayDriver>(window: &MinimalSoftwareWindow, display: &D) {
     window.draw_if_needed(|renderer| {
         struct Provider<'a, D> {
@@ -118,14 +84,8 @@ pub fn render_frame<D: DisplayDriver>(window: &MinimalSoftwareWindow, display: &
     });
 }
 
-/// Feeds a board's touch reading into the Slint window as pointer events.
-/// `last_position` tracks the most recent contact point (`None` means "not
-/// currently down"), since a `TouchDriver`'s `poll` reports "no touch" as
-/// `None` rather than an explicit lift event with a final coordinate --
-/// Slint's `TouchArea.clicked` only fires when both the press AND the
-/// release land inside the area's bounds, so the release event must reuse
-/// the last real position, not some fixed placeholder (a `(0, 0)` release
-/// previously landed outside every button, silently swallowing every tap).
+/// Feeds a touch reading into Slint. The release reuses the last position because `clicked` only
+/// fires when press and release both land inside the area.
 pub fn dispatch_touch<T: TouchDriver>(window: &MinimalSoftwareWindow, touch: &mut T, last_position: &mut Option<LogicalPosition>) {
     match touch.poll() {
         Some(ev) => {

@@ -1,31 +1,19 @@
-//! Wire protocol between the phone app and the device's BLE signing service:
-//! the `Request`/`Response` enums (postcard-encoded), the GATT UUIDs and the
-//! protocol version. Kept free of any ESP-IDF dependency so it builds and
-//! tests on a plain host -- that is what lets CI generate golden test
-//! vectors (see `tests/vectors.rs`) that the mobile app's encoder/decoder is
-//! checked against.
+//! BLE wire protocol shared by the firmware and the phone app. Free of ESP-IDF dependencies so
+//! the golden vectors (`tests/vectors.rs`) the app is tested against build on the host.
 //!
-//! Postcard encodes an enum variant by its declaration-order discriminant:
-//! new `Request`/`Response` variants must only ever be **appended**.
+//! Postcard encodes enum variants by declaration order: only ever append new variants.
 
 use serde::{Deserialize, Serialize};
 
-/// Bumped only on a wire-breaking change (an existing variant's bytes or
-/// position changed, or one was removed). Appending a variant is additive
-/// and does not bump it.
+/// Bumped only on a wire-breaking change (a variant's bytes or position changed, or one was
+/// removed); appending a variant doesn't bump it.
 pub const PROTOCOL_VERSION: u16 = 1;
 
-// Randomly generated, not derived from anything -- just needs to be
-// distinct from any well-known service.
 pub const SERVICE_UUID: u128 = 0x5f4b2a9e7c3d4e8fa1b6d09c2e7f4a5b;
 pub const REQUEST_CHARACTERISTIC_UUID: u128 = 0x8e2c6f0a4b7d4c9e9a3f5d1e8b6c2a70;
 pub const RESPONSE_CHARACTERISTIC_UUID: u128 = 0x3a9d7e1c5b4f4a8d8c2e6f0b9d3a7c50;
 
-/// One Signing Operator's commitment, as part of a `Sign` request's
-/// `statechain_commitments`. Kept as a flat list (not a map) since
-/// `frost_secp256k1_tr::Identifier` doesn't implement `serde` -- the raw
-/// identifier bytes get reconstructed via `Identifier::deserialize` when
-/// handling the request.
+/// One Signing Operator's commitment; a list, not a map, because `Identifier` has no serde.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StatechainCommitment {
     pub identifier: Vec<u8>,
@@ -35,11 +23,8 @@ pub struct StatechainCommitment {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Request {
-    /// Round 1 (`getRandomSigningCommitment`): no leaf key needed yet --
-    /// `round1::commit`'s "secret" input is just entropy for a good random
-    /// nonce, not a cryptographic binding to that specific key, so using
-    /// the identity key here (always available, regardless of which leaf
-    /// eventually gets spent) is fine.
+    /// FROST round 1. Uses the identity key: the commit secret only seeds nonce entropy and isn't
+    /// bound to the leaf being spent.
     Commit,
     /// Round 2 (`signFrost`).
     Sign {
@@ -49,25 +34,13 @@ pub enum Request {
         message: Vec<u8>,
         statechain_commitments: Vec<StatechainCommitment>,
         verifying_key: Vec<u8>,
-        /// Present for Lightning payments that need a leaf swap first -- see
-        /// `corisco_crypto_core::frost::frost_sign`'s doc comment.
+        /// Set for Lightning payments that need a leaf swap first.
         adaptor_public_key: Option<Vec<u8>>,
-        /// `true` for a signature that spends a leaf, `false` for claim refund-tx signatures.
-        /// `false` cannot skip the prompt on its own: the device also requires that it saw the
-        /// leaf being claimed, and prompts otherwise.
+        /// `true` for leaf spends, `false` for claim refund-tx signatures. `false` alone can't skip
+        /// the prompt: the device must also have seen the leaf being claimed.
         requires_confirmation: bool,
-        /// App-asserted payment context for the confirm screen -- NOT
-        /// independently verified against `message`, which is already a
-        /// one-way sighash by the time it reaches this device (the SDK
-        /// hands `SparkSigner.signFrost` only the hash, never the raw
-        /// transaction it was computed from, so there is no way for this
-        /// device to recompute or check it against these fields; a
-        /// dishonest phone could show one thing here and sign something
-        /// else entirely). Same trust model most software Lightning
-        /// wallets already use, just surfaced on a second screen instead
-        /// of only the phone's. Only meaningful when `requires_confirmation`
-        /// is true; `None` falls back to the existing leaf id +
-        /// message-fingerprint display.
+        /// App-asserted, NOT verified: `message` is already a sighash, so a dishonest phone could
+        /// show one amount and sign another. `None` falls back to leaf id and message fingerprint.
         amount_sats: Option<u64>,
         destination: Option<String>,
     },
@@ -78,36 +51,19 @@ pub enum Request {
     /// Mirrors `signMessageWithIdentityKey(message, compact?)`; `message`
     /// here is always a 32-byte digest.
     SignEcdsaIdentity { message: Vec<u8>, compact: bool },
-    /// `subtractAndSplitSecretWithProofsGivenDerivations` -- the leaf-
-    /// ownership-transfer "key tweak" a claim needs to take ownership of an
-    /// incoming leaf: subtract two derived private keys, then Shamir-split
-    /// (with Feldman proofs) the difference for the Signing Operators.
+    /// Claim key tweak (`subtractAndSplitSecretWithProofsGivenDerivations`): subtract two derived
+    /// keys and Shamir-split the difference, with Feldman proofs, for the Signing Operators.
     SubtractAndSplitSecretWithProofs {
         first: KeyDerivationRef,
         second: KeyDerivationRef,
         threshold: u32,
         num_shares: u32,
     },
-    /// `decryptEcies` -- despite decrypting to a private key internally,
-    /// the `SparkSigner` interface method returns only the *public* key of
-    /// that decrypted value. Needed on the claim path specifically by
-    /// `verifyPendingTransfer` (called from `claimTransferCore` before
-    /// `subtractAndSplitSecretWithProofsGivenDerivations` even runs) --
-    /// without it, claiming fails with "identityKey not initialized" (the
-    /// base `DefaultSparkSigner`'s unimplemented fallback for this exact
-    /// method).
+    /// `decryptEcies`: returns only the public key of the decrypted private key. The SDK's claim
+    /// verification needs it.
     DecryptEciesToPublicKey { ciphertext: Vec<u8> },
-    /// `subtractSplitAndEncrypt` -- the *sending*-side counterpart to
-    /// `SubtractAndSplitSecretWithProofs`: needed when a payment's leaves
-    /// don't sum to the exact invoice amount, so the SSP swaps them for
-    /// ones that do (subtract two derived keys, Shamir-split the
-    /// difference for the Signing Operators, and ECIES-encrypt the
-    /// "second"/fresh key to the receiver so they can later claim it --
-    /// exactly mirrors what `verifyPendingTransfer`/
-    /// `SubtractAndSplitSecretWithProofs` do on the receiving end). Without
-    /// it, paying an invoice that doesn't match an exact leaf denomination
-    /// fails with "Private key not initialized" (`DefaultSparkSigner`'s
-    /// unimplemented fallback for this exact method).
+    /// `subtractSplitAndEncrypt`: the sending-side leaf swap, like `SubtractAndSplitSecretWithProofs`
+    /// plus the new key ECIES-encrypted to the receiver.
     SubtractSplitAndEncrypt {
         first: KeyDerivationRef,
         second: KeyDerivationRef,

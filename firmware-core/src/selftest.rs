@@ -1,13 +1,6 @@
-//! Boot-time crypto self-tests. Board-agnostic: exercises `corisco-crypto-core`
-//! against real hardware (timing, actual elliptic-curve math) without
-//! touching display/touch/BLE, so every board crate can call these from its
-//! own `main()` the same way.
+//! Boot-time crypto self-tests and benchmarks, run on the target chip.
 
-/// Isolates the cost of a single SHA512 compression: `Sha512::digest` on a
-/// <=111-byte message pads to exactly one 128-byte block, so N calls here
-/// is N compressions. Used to find out whether PBKDF2's ~4096-compression
-/// cost (2048 rounds x 2 HMAC-SHA512 calls) is "software SHA512 is just
-/// this slow on Xtensa" or something worse than that.
+/// Times single-block SHA-512 compressions, the unit cost of PBKDF2 seed derivation.
 pub fn bench_sha512_single_block() {
     use log::info;
     use sha2::{Digest, Sha512};
@@ -30,14 +23,7 @@ pub fn bench_sha512_single_block() {
     );
 }
 
-/// Exercises `corisco_crypto_core::frost`'s round1/round2 against real
-/// elliptic-curve math on real hardware, end to end: simulates a 3-of-5
-/// Signing-Operator group locally (standing in for the real network, which
-/// doesn't exist yet), signs with a real derived LEAF key exactly as
-/// `frost_commit`/`frost_sign` would be called over BLE, aggregates, and
-/// verifies the resulting signature. Mirrors `crypto-core`'s
-/// `user_signature_share_aggregates_into_valid_signature` host test, but
-/// running (and timed) on the actual target chip.
+/// End-to-end FROST signing against a locally simulated 3-of-5 operator group, timed on-device.
 pub fn frost_self_test(roots: &corisco_crypto_core::SparkKeyRoots) -> anyhow::Result<()> {
     use frost_secp256k1_tr::{
         aggregate_with_tweak,
@@ -54,10 +40,7 @@ pub fn frost_self_test(roots: &corisco_crypto_core::SparkKeyRoots) -> anyhow::Re
 
     let leaf_key = roots.derive_leaf_key("018f3e2a-frost-self-test-0000-000000000000")?;
 
-    // Simulated Signing-Operator group: rerolled (not the device's own key)
-    // until the combined key is even-Y, matching the deployed invariant
-    // that a leaf's combined key is established even-Y at creation time --
-    // see crypto-core's frost.rs test for why.
+    // Reroll until the combined key is even-Y, as Spark leaves are at creation.
     let leaf_signing_share = frost_secp256k1_tr::keys::SigningShare::deserialize(&leaf_key)?;
     let leaf_verifying_share = frost_secp256k1_tr::keys::VerifyingShare::from(leaf_signing_share);
 
@@ -77,7 +60,6 @@ pub fn frost_self_test(roots: &corisco_crypto_core::SparkKeyRoots) -> anyhow::Re
 
     let t0 = unsafe { esp_idf_svc::sys::esp_timer_get_time() };
 
-    // --- Round 1 ---
     let se_signers: Vec<Identifier> = se_key_packages.keys().take(3).cloned().collect();
     let mut se_nonces = BTreeMap::new();
     let mut se_commitments: BTreeMap<Identifier, corisco_crypto_core::frost::SigningCommitments> = BTreeMap::new();
@@ -91,7 +73,6 @@ pub fn frost_self_test(roots: &corisco_crypto_core::SparkKeyRoots) -> anyhow::Re
 
     let t1 = unsafe { esp_idf_svc::sys::esp_timer_get_time() };
 
-    // --- Round 2 ---
     let signing_package = SigningPackage::new_with_adaptor(
         {
             let mut c = se_commitments.clone();
@@ -136,8 +117,7 @@ pub fn frost_self_test(roots: &corisco_crypto_core::SparkKeyRoots) -> anyhow::Re
         round2::SignatureShare::deserialize(&device_share_bytes)?,
     );
 
-    // --- Aggregate + verify (phone-side steps in reality; done here too so
-    // the on-device numbers mean something end to end) ---
+    // Aggregation happens phone-side in production; done here to verify end to end.
     let mut verifying_shares: BTreeMap<_, _> = se_key_packages
         .iter()
         .map(|(id, kp)| (*id, *kp.verifying_share()))

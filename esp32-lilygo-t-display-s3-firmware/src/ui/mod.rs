@@ -1,37 +1,8 @@
-//! Onboarding/unlock flow controller -- drives `AppWindow` (generated from
-//! `app.slint`) through
-//! Welcome -> [Create: WordCount -> Mnemonic] or [Recover: WordCount ->
-//! WordEntry] -> Set PIN (either path) or Unlock (already provisioned),
-//! returning the decrypted 64-byte seed once either path completes. The
-//! sign-confirmation screen (`AppWindow`'s `screen == 4`) and the Home
-//! screen's factory-reset flow (`screen == 10`) are driven separately,
-//! later, by `main.rs`'s own loop once BLE is up -- they reuse this same
-//! `AppWindow`/window rather than this module owning it past the point
-//! this function returns.
+//! Onboarding and unlock flow: drives `AppWindow` until a decrypted seed is available.
 //!
-//! PIN digits never touch the UI layer as a real string beyond what's
-//! needed to encrypt/decrypt/compare -- `app.slint` only ever receives a
-//! digit *count* (for the dot indicator), never the PIN itself.
-//!
-//! Every real crypto call here (mnemonic/seed generation, PIN encrypt/
-//! decrypt, recovery-phrase validation) is genuinely slow -- seconds, not
-//! milliseconds, in pure software on this chip (see
-//! `corisco_crypto_core::mnemonic_to_seed`'s and `seed_lock::PIN_KDF_ITERATIONS`'s
-//! own doc comments). Slint callbacks run synchronously inside
-//! `dispatch_touch`, and nothing else redraws the screen until the
-//! callback returns -- calling one of these directly from a callback
-//! would freeze the whole UI for that whole duration with zero visual
-//! feedback, indistinguishable from a crash to the user. So each such
-//! transition is split in two: the
-//! callback only sets a `Stage::Pending*` marker (fast, renders the
-//! "Working…" screen on the very next frame), and the main loop below --
-//! *after* that frame has actually been drawn -- performs the real work
-//! and applies the resulting stage.
-//!
-//! Word entry (recovery), by contrast, is cheap string filtering against
-//! the in-memory BIP39 wordlist -- no `Pending` split needed for each
-//! keystroke, only for the final checksum-validate-and-derive-seed step
-//! once all words are in (`Stage::PendingValidateRecovery`).
+//! Slow crypto (seed derivation, PIN encrypt/decrypt) takes seconds and Slint callbacks block
+//! rendering, so callbacks only set a `Stage::Pending*`; the loop runs the work once the
+//! "Working..." frame has been drawn. The PIN never reaches Slint, only its digit count.
 
 use crate::display::Display;
 use crate::touch::Touch;
@@ -47,9 +18,7 @@ use std::time::Instant;
 
 const PIN_LENGTH: usize = 6;
 
-/// Which onboarding path led to `Stage::WordCount` -- it's shared between
-/// both (see that stage's doc comment), so something has to remember
-/// which follow-up stage to produce once a word count is picked.
+/// Which path led to the shared `Stage::WordCount`.
 #[derive(Clone, Copy)]
 enum Purpose {
     Create,
@@ -58,43 +27,20 @@ enum Purpose {
 
 enum Stage {
     Welcome,
-    /// Shared between the create and recover paths -- `purpose` decides
-    /// whether picking a count leads to `PendingGenerateMnemonic` (create)
-    /// or `WordEntry` (recover).
     WordCount { purpose: Purpose },
-    /// `page` is which 12-word page (0-based) is currently shown --
-    /// paginated rather than scrollable (see `app.slint`'s own comment on
-    /// this screen): a flick-to-scroll gesture is easy to miss entirely
-    /// on a screen this small, and missing a word of your own recovery
-    /// phrase is a much worse failure than on any other screen here.
     Mnemonic { words: Vec<String>, seed: [u8; 64], page: usize },
-    /// Recovery's word-by-word entry. `words` holds completed words so
-    /// far (already validated as real wordlist entries -- see
-    /// `letter_enabled_model`, which only ever leaves letters tappable
-    /// when they can continue some real word); `total` is 12 or 24 from
-    /// `WordCount`; `prefix` is the current word's not-yet-completed
-    /// letters.
+    /// `words` are complete wordlist entries; `prefix` is the word in progress.
     WordEntry { words: Vec<String>, total: usize, prefix: String },
     SetPinFirst { seed: [u8; 64] },
     SetPinConfirm { seed: [u8; 64], first_pin: String },
     Unlock,
     /// Terminal: caller should return this seed.
     Done([u8; 64]),
-    /// Terminal: loops forever showing the wiped screen (see module doc --
-    /// there is genuinely nothing else to do here short of a physical
-    /// reboot back into onboarding).
+    /// Terminal: nothing to do until a reboot.
     Wiped,
-    /// Set by `on_create_pressed`; the main loop does the real
-    /// mnemonic/seed generation once this has rendered.
     PendingGenerateMnemonic { word_count: usize },
-    /// Set once a 6th PIN digit lands on `SetPinConfirm`; the main loop
-    /// does the real encrypt+store once this has rendered.
     PendingEncrypt { seed: [u8; 64], pin: String },
-    /// Set once a 6th PIN digit lands on `Unlock`; the main loop does the
-    /// real load+decrypt once this has rendered.
     PendingDecrypt { pin: String },
-    /// Set once `WordEntry` collects its final word; the main loop
-    /// checksum-validates the phrase and (on success) derives the seed.
     PendingValidateRecovery { words: Vec<String> },
 }
 
@@ -107,20 +53,11 @@ fn words_model(words: &[String]) -> ModelRc<SharedString> {
     ModelRc::new(VecModel::from(words.iter().map(|w| SharedString::from(w.as_str())).collect::<Vec<_>>()))
 }
 
-/// Every wordlist entry starting with `prefix` -- the live candidate set
-/// an in-progress word could still resolve to. Recomputed on every
-/// keystroke rather than cached: `wordlist()` is a flat 2048-entry array,
-/// a linear scan+filter is well under a millisecond, nowhere near the
-/// "needs a Pending split" threshold the module doc comment describes.
 fn candidates_for(prefix: &str) -> Vec<&'static str> {
     mnemonic_gen::wordlist().iter().copied().filter(|w| w.starts_with(prefix)).collect()
 }
 
-/// The (up to 3) candidates actually offered as tap-to-complete
-/// suggestions -- `wordlist()` is alphabetically ordered, so this is
-/// deterministic and, critically, computed the exact same way here as in
-/// `on_suggestion_pressed` (which resolves a tapped index back to a real
-/// word using this same function) -- they must never drift apart.
+/// Shared with `on_suggestion_pressed` so a tapped index resolves to the word that was shown.
 fn top_suggestions(candidates: &[&'static str]) -> Vec<&'static str> {
     candidates.iter().take(3).copied().collect()
 }
@@ -129,10 +66,7 @@ fn suggestions_model(words: &[&str]) -> ModelRc<SharedString> {
     ModelRc::new(VecModel::from(words.iter().map(|w| SharedString::from(*w)).collect::<Vec<_>>()))
 }
 
-/// One flag per letter a-z: whether any candidate word has that letter
-/// immediately after the current prefix -- what `app.slint`'s adaptive
-/// keyboard dims/disables against, so the user can never type a prefix
-/// that can't possibly complete into a real wordlist entry.
+/// Per letter a-z: whether some candidate continues the prefix with it.
 fn letter_enabled_model(candidates: &[&str], prefix_len: usize) -> ModelRc<bool> {
     let mut flags = [false; 26];
     for word in candidates {
@@ -145,21 +79,12 @@ fn letter_enabled_model(candidates: &[&str], prefix_len: usize) -> ModelRc<bool>
     ModelRc::new(VecModel::from(flags.to_vec()))
 }
 
-/// Re-renders whatever `flow.stage` currently is onto `ui`'s properties.
-/// Called once up front and again after every stage transition.
+/// Renders the current stage onto `ui`.
 fn sync_ui(ui: &AppWindow, flow: &FlowInner) {
     match &flow.stage {
         Stage::Welcome => ui.set_screen(0),
         Stage::WordCount { .. } => {
-            // Deliberately does NOT clear `word-entry-error` here (unlike,
-            // say, `SetPinFirst`'s unconditional `pin-error` reset below)
-            // -- `PendingValidateRecovery`'s failure path sets that
-            // message and transitions straight to this stage, and it
-            // needs to survive this render to actually be seen. Cleared
-            // explicitly instead, at the point a *fresh* Welcome ->
-            // WordCount transition happens (`on_create_pressed`/
-            // `on_recover_pressed`), where a stale message would
-            // otherwise wrongly persist.
+            // Keeps `word-entry-error`: a failed recovery lands here and must still show it.
             ui.set_screen(8);
         }
         Stage::Mnemonic { words, page, .. } => {
@@ -223,10 +148,7 @@ fn sync_ui(ui: &AppWindow, flow: &FlowInner) {
     }
 }
 
-/// Performs the real work for whichever `Stage::Pending*` is currently
-/// set, returning the stage that follows it. Only ever called right after
-/// that pending stage's "Working…" frame has actually been rendered (see
-/// the module doc comment) -- a no-op passthrough for every other stage.
+/// Runs the slow work for a `Stage::Pending*` and returns the next stage.
 fn run_pending_work(ui: &AppWindow, stage: Stage, storage: &Storage) -> Stage {
     match stage {
         Stage::PendingGenerateMnemonic { word_count } => {
@@ -238,9 +160,6 @@ fn run_pending_work(ui: &AppWindow, stage: Stage, storage: &Storage) -> Stage {
             let t0 = Instant::now();
             let seed = corisco_crypto_core::mnemonic_to_seed(&mnemonic, "");
             log::info!("ui: mnemonic_to_seed took {:?}", t0.elapsed());
-            // Numbered here (not in app.slint) so the Mnemonic screen's
-            // display grid only ever needs plain array indexing, never
-            // int/string concatenation -- see that screen's own comment.
             let words: Vec<String> = mnemonic
                 .to_string()
                 .split_whitespace()
@@ -310,12 +229,8 @@ fn run_pending_work(ui: &AppWindow, stage: Stage, storage: &Storage) -> Stage {
                 Stage::SetPinFirst { seed }
             }
             Err(e) => {
-                // Only possible failure mode: the checksum doesn't match
-                // (every individual word was already a real wordlist
-                // entry -- the adaptive keyboard can't produce anything
-                // else). No way to say *which* word was wrong from a
-                // checksum alone, so recovery restarts from the count
-                // choice rather than trying to salvage a partial retry.
+                // Every word is valid, so this is a checksum failure, which can't say which word
+                // is wrong: restart recovery.
                 log::warn!("ui: recovery phrase failed validation: {e}");
                 ui.set_word_entry_error("Recovery phrase invalid, try again".into());
                 Stage::WordCount { purpose: Purpose::Recover }
@@ -325,10 +240,7 @@ fn run_pending_work(ui: &AppWindow, stage: Stage, storage: &Storage) -> Stage {
     }
 }
 
-/// Handles one PIN digit (0-9) reaching `PIN_LENGTH` -- fast, non-crypto
-/// transitions only (matching first-entry vs confirm, or handing off to a
-/// `Stage::Pending*` for the main loop to actually execute). Called from
-/// the `pin-digit-pressed` callback once the buffer is full.
+/// Handles a full PIN buffer; slow crypto is deferred via `Stage::Pending*`.
 fn submit_pin(ui: &AppWindow, flow: &mut FlowInner) {
     let pin = std::mem::take(&mut flow.pin_buf);
     flow.stage = match std::mem::replace(&mut flow.stage, Stage::Welcome) {
@@ -342,16 +254,12 @@ fn submit_pin(ui: &AppWindow, flow: &mut FlowInner) {
             }
         }
         Stage::Unlock => Stage::PendingDecrypt { pin },
-        other => other, // Welcome/WordCount/Mnemonic/WordEntry/Done/Wiped: digits ignored (not the PIN screen)
+        other => other,
     };
 }
 
-/// Blocks until either a real seed is ready (returns it, along with the
-/// `AppWindow` this function built -- callers reuse this same instance
-/// afterward, e.g. to show the Home/pairing/sign-confirm/factory-reset
-/// screens, rather than constructing a second, ambiguous one against the
-/// same underlying `MinimalSoftwareWindow`) or the device gets wiped
-/// (never returns -- see `Stage::Wiped`'s doc comment).
+/// Blocks until a seed is ready and returns it with the `AppWindow`, which main.rs keeps using.
+/// Never returns once the device is wiped.
 pub fn run_onboarding_or_unlock(
     window: &Rc<MinimalSoftwareWindow>,
     display: &Display,
@@ -536,17 +444,12 @@ pub fn run_onboarding_or_unlock(
         slint::platform::update_timers_and_animations();
         platform::render_frame(window, display);
 
-        // Checked right after the render above, so a Home screen set by
-        // the *previous* iteration's pending-work step (below) has
-        // actually been drawn at least once before returning -- returning
-        // any earlier would skip straight past it, same class of bug as
-        // the "Working…" screen this whole split exists to avoid.
+        // After the render, so the Home screen set last iteration is drawn before returning.
         if let Stage::Done(seed) = &flow.borrow().stage {
             return Ok((ui, *seed));
         }
 
-        // Only after a render (possibly a freshly-set "Working…" screen)
-        // has actually been drawn: run any pending slow crypto call.
+        // Only once the "Working..." frame has been drawn.
         let is_pending = matches!(
             flow.borrow().stage,
             Stage::PendingGenerateMnemonic { .. }
