@@ -65,22 +65,22 @@ fn err(message: impl std::fmt::Display) -> Response {
 /// and RAM is too tight to grow that stack without starving NimBLE's own buffers.
 fn handle_request(signer: &Arc<Signer>, responder: ResponseChannel, req: Request) -> Option<Response> {
     let roots = &signer.roots;
-    let defer = |work: DeferredRequest| -> Option<Response> {
-        if signer.work_tx.send(work).is_err() {
+    let defer = |work: Work| -> Option<Response> {
+        if signer.work_tx.send(DeferredRequest(work)).is_err() {
             return Some(err("no deferred-work receiver (main thread gone?)"));
         }
         None
     };
     Some(match req {
-        Request::Commit => return defer(DeferredRequest::Commit { signer: signer.clone(), responder }),
+        Request::Commit => return defer(Work::Commit { signer: signer.clone(), responder }),
         Request::GetLeafPublicKey { leaf_id } => {
-            return defer(DeferredRequest::GetLeafPublicKey { signer: signer.clone(), leaf_id, responder })
+            return defer(Work::GetLeafPublicKey { signer: signer.clone(), leaf_id, responder })
         }
         Request::SignSchnorrIdentity { message } => {
-            return defer(DeferredRequest::SignSchnorrIdentity { signer: signer.clone(), message, responder })
+            return defer(Work::SignSchnorrIdentity { signer: signer.clone(), message, responder })
         }
         Request::SignEcdsaIdentity { message, compact } => {
-            return defer(DeferredRequest::SignEcdsaIdentity { signer: signer.clone(), message, compact, responder })
+            return defer(Work::SignEcdsaIdentity { signer: signer.clone(), message, compact, responder })
         }
         Request::Sign {
             commitment_id,
@@ -142,7 +142,7 @@ fn handle_request(signer: &Arc<Signer>, responder: ResponseChannel, req: Request
                 if signer.confirm_tx.send(confirm_req).is_err() {
                     return Some(err("no confirmation receiver (UI thread gone?)"));
                 }
-            } else if signer.work_tx.send(DeferredRequest::AutoSign { req: confirm_req }).is_err() {
+            } else if signer.work_tx.send(DeferredRequest(Work::AutoSign { req: confirm_req })).is_err() {
                 return Some(err("no deferred-work receiver (main thread gone?)"));
             }
             return None;
@@ -154,7 +154,7 @@ fn handle_request(signer: &Arc<Signer>, responder: ResponseChannel, req: Request
             Response::PublicKey { public_key: roots.deposit.public_key_compressed().to_vec() }
         }
         Request::SubtractAndSplitSecretWithProofs { first, second, threshold, num_shares } => {
-            return defer(DeferredRequest::SubtractAndSplitSecretWithProofs {
+            return defer(Work::SubtractAndSplitSecretWithProofs {
                 signer: signer.clone(),
                 first,
                 second,
@@ -164,10 +164,10 @@ fn handle_request(signer: &Arc<Signer>, responder: ResponseChannel, req: Request
             })
         }
         Request::DecryptEciesToPublicKey { ciphertext } => {
-            return defer(DeferredRequest::DecryptEciesToPublicKey { signer: signer.clone(), ciphertext, responder })
+            return defer(Work::DecryptEciesToPublicKey { signer: signer.clone(), ciphertext, responder })
         }
         Request::SubtractSplitAndEncrypt { first, second, receiver_public_key, threshold, num_shares } => {
-            return defer(DeferredRequest::SubtractSplitAndEncrypt {
+            return defer(Work::SubtractSplitAndEncrypt {
                 signer: signer.clone(),
                 first,
                 second,
@@ -270,7 +270,9 @@ pub fn complete_sign(req: Box<SignConfirmationRequest>, accept: bool) {
 }
 
 /// Work moved off the NimBLE host task's stack (see `handle_request`).
-pub enum DeferredRequest {
+pub struct DeferredRequest(Work);
+
+enum Work {
     Commit {
         signer: Arc<Signer>,
         responder: ResponseChannel,
@@ -321,8 +323,8 @@ pub enum DeferredRequest {
 
 /// Runs deferred work on the main thread, whose stack is sized for curve math.
 pub fn run_deferred(req: DeferredRequest) {
-    match req {
-        DeferredRequest::Commit { signer, responder } => {
+    match req.0 {
+        Work::Commit { signer, responder } => {
             let response = match corisco_crypto_core::frost::frost_commit(&signer.roots.identity.private_key) {
                 Ok((nonce, commitment)) => match (commitment.hiding().serialize(), commitment.binding().serialize()) {
                     (Ok(hiding), Ok(binding)) => {
@@ -336,18 +338,18 @@ pub fn run_deferred(req: DeferredRequest) {
             };
             responder.send(&response);
         }
-        DeferredRequest::GetLeafPublicKey { signer, leaf_id, responder } => {
+        Work::GetLeafPublicKey { signer, leaf_id, responder } => {
             let response = match signer.roots.derive_leaf_public_key(&leaf_id) {
                 Ok(pk) => Response::PublicKey { public_key: pk.to_vec() },
                 Err(e) => err(format!("{e:?}")),
             };
             responder.send(&response);
         }
-        DeferredRequest::SignSchnorrIdentity { signer, message, responder } => {
+        Work::SignSchnorrIdentity { signer, message, responder } => {
             let sig = corisco_crypto_core::sign_schnorr(&signer.roots.identity.private_key, &message);
             responder.send(&Response::Signature { signature: sig.to_bytes().to_vec() });
         }
-        DeferredRequest::SignEcdsaIdentity { signer, message, compact, responder } => {
+        Work::SignEcdsaIdentity { signer, message, compact, responder } => {
             // DER unless `compact`: the SDK's auth flow omits `compact`, and spark_authn rejects
             // compact signatures.
             let response = match <[u8; 32]>::try_from(message.as_slice()) {
@@ -360,14 +362,7 @@ pub fn run_deferred(req: DeferredRequest) {
             };
             responder.send(&response);
         }
-        DeferredRequest::SubtractAndSplitSecretWithProofs {
-            signer,
-            first,
-            second,
-            threshold,
-            num_shares,
-            responder,
-        } => {
+        Work::SubtractAndSplitSecretWithProofs { signer, first, second, threshold, num_shares, responder } => {
             let Some(claimed_leaf_id) = KeyDerivationRef::claim_leaf_id(&first, &second).map(str::to_owned) else {
                 responder.send(&err("SubtractAndSplitSecretWithProofs only tweaks an incoming key onto a leaf"));
                 return;
@@ -392,7 +387,7 @@ pub fn run_deferred(req: DeferredRequest) {
                 };
             responder.send(&response);
         }
-        DeferredRequest::DecryptEciesToPublicKey { signer, ciphertext, responder } => {
+        Work::DecryptEciesToPublicKey { signer, ciphertext, responder } => {
             let response = match corisco_crypto_core::decrypt_ecies(&ciphertext, &signer.roots.identity.private_key) {
                 Ok(plaintext) => match <[u8; 32]>::try_from(plaintext.as_slice()) {
                     Ok(private_key) => {
@@ -405,8 +400,8 @@ pub fn run_deferred(req: DeferredRequest) {
             };
             responder.send(&response);
         }
-        DeferredRequest::AutoSign { req } => complete_sign(req, true),
-        DeferredRequest::SubtractSplitAndEncrypt {
+        Work::AutoSign { req } => complete_sign(req, true),
+        Work::SubtractSplitAndEncrypt {
             signer,
             first,
             second,

@@ -166,19 +166,6 @@ impl Display {
         self.trans_done.wait_any();
         Ok(())
     }
-
-    /// Fills the screen with one color, in DMA-buffer-sized bands.
-    pub fn fill_screen(&self, color: u16) -> anyhow::Result<()> {
-        let band = vec![color; WIDTH as usize * ROWS_PER_CHUNK as usize];
-        let mut y = 0u16;
-        while y < HEIGHT {
-            let rows = ROWS_PER_CHUNK.min(HEIGHT - y);
-            let slice = &band[..WIDTH as usize * rows as usize];
-            self.draw_bitmap(0, y, WIDTH, y + rows, slice)?;
-            y += rows;
-        }
-        Ok(())
-    }
 }
 
 impl Drop for Display {

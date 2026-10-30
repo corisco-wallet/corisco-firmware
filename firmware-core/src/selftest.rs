@@ -45,7 +45,7 @@ pub fn frost_self_test(roots: &corisco_crypto_core::SparkKeyRoots) -> anyhow::Re
     let leaf_verifying_share = frost_secp256k1_tr::keys::VerifyingShare::from(leaf_signing_share);
 
     let (se_key_packages, combined_vk) = loop {
-        let (se_shares, se_pubkey_pkg) = generate_with_dealer(5, 3, IdentifierList::Default, &mut rng)?;
+        let (se_shares, se_pubkey_pkg) = generate_with_dealer(5, 3, IdentifierList::Default, rng)?;
         let combined =
             VerifyingKey::new(se_pubkey_pkg.verifying_key().to_element() + leaf_verifying_share.to_element());
         if combined.has_even_y() {
