@@ -84,15 +84,6 @@ fn main() -> anyhow::Result<()> {
 
     selftest::bench_sha512_single_block();
 
-    let digest = {
-        use sha2::{Digest, Sha256};
-        let d = Sha256::digest(b"hello from the T-Display-S3");
-        let arr: [u8; 32] = d.into();
-        arr
-    };
-    let sig = corisco_crypto_core::sign_ecdsa_prehashed(&roots.identity.private_key, &digest);
-    info!("test signature: {}", hex::encode(sig.to_bytes()));
-
     selftest::frost_self_test(&roots).expect("FROST self-test should produce a valid signature");
 
     info!(

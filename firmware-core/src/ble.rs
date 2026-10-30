@@ -605,7 +605,6 @@ pub fn run(
             if passkey_tx.send(PasskeyDisplay { passkey }).is_err() {
                 log::warn!("ble: no receiver for passkey display (UI thread gone?)");
             }
-            info!("ble: pairing passkey {passkey:06}");
             passkey
         });
     }
