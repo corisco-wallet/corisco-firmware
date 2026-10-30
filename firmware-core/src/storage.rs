@@ -1,8 +1,8 @@
 //! PIN-encrypted seed storage in NVS, plus the wrong-PIN counter and settings.
 
+use corisco_crypto_core::seed_lock::EncryptedSeed;
 use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvs, NvsDefault};
 use esp_idf_svc::sys::EspError;
-use corisco_crypto_core::seed_lock::EncryptedSeed;
 
 const NAMESPACE: &str = "signer";
 const KEY_SEED_BLOB: &str = "seed_blob";

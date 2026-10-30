@@ -46,9 +46,8 @@ pub fn frost_self_test(roots: &corisco_crypto_core::SparkKeyRoots) -> anyhow::Re
 
     let (se_key_packages, combined_vk) = loop {
         let (se_shares, se_pubkey_pkg) = generate_with_dealer(5, 3, IdentifierList::Default, &mut rng)?;
-        let combined = VerifyingKey::new(
-            se_pubkey_pkg.verifying_key().to_element() + leaf_verifying_share.to_element(),
-        );
+        let combined =
+            VerifyingKey::new(se_pubkey_pkg.verifying_key().to_element() + leaf_verifying_share.to_element());
         if combined.has_even_y() {
             let se_key_packages: BTreeMap<Identifier, FrostKeyPackage> = se_shares
                 .into_iter()
@@ -118,10 +117,8 @@ pub fn frost_self_test(roots: &corisco_crypto_core::SparkKeyRoots) -> anyhow::Re
     );
 
     // Aggregation happens phone-side in production; done here to verify end to end.
-    let mut verifying_shares: BTreeMap<_, _> = se_key_packages
-        .iter()
-        .map(|(id, kp)| (*id, *kp.verifying_share()))
-        .collect();
+    let mut verifying_shares: BTreeMap<_, _> =
+        se_key_packages.iter().map(|(id, kp)| (*id, *kp.verifying_share())).collect();
     let device_signing_share = frost_secp256k1_tr::keys::SigningShare::deserialize(&leaf_key)?;
     verifying_shares.insert(
         corisco_crypto_core::frost::user_identifier(),
@@ -135,11 +132,7 @@ pub fn frost_self_test(roots: &corisco_crypto_core::SparkKeyRoots) -> anyhow::Re
         .verify(message, &signature)
         .map_err(|e| anyhow::anyhow!("FROST self-test signature failed to verify: {e:?}"))?;
 
-    info!(
-        "frost self-test: round1 {} us, round2 {} us, signature verified ok",
-        t1 - t0,
-        t2 - t1
-    );
+    info!("frost self-test: round1 {} us, round2 {} us, signature verified ok", t1 - t0, t2 - t1);
 
     Ok(())
 }

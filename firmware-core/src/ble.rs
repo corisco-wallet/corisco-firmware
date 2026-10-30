@@ -12,16 +12,16 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Condvar, Mutex};
 
+use corisco_crypto_core::frost::{NonceCommitment, SigningCommitments, SigningNonces};
+use corisco_crypto_core::SparkKeyRoots;
 use esp32_nimble::utilities::mutex::Mutex as NimbleMutex;
 use esp32_nimble::utilities::BleUuid;
 use esp32_nimble::{enums::*, BLEAdvertisementData, BLECharacteristic, BLEDevice, NimbleProperties};
 use frost_secp256k1_tr::Identifier;
 use log::info;
-use corisco_crypto_core::frost::{NonceCommitment, SigningCommitments, SigningNonces};
-use corisco_crypto_core::SparkKeyRoots;
 
-pub use corisco_protocol::{REQUEST_CHARACTERISTIC_UUID, RESPONSE_CHARACTERISTIC_UUID, SERVICE_UUID};
 use corisco_protocol::{KeyDerivationRef, Request, Response, ShareWire};
+pub use corisco_protocol::{REQUEST_CHARACTERISTIC_UUID, RESPONSE_CHARACTERISTIC_UUID, SERVICE_UUID};
 
 use crate::pending::{AuthorizedLeaves, PendingStore};
 
@@ -36,9 +36,7 @@ fn resolve_private_key(roots: &SparkKeyRoots, d: &KeyDerivationRef) -> Result<[u
     match d {
         KeyDerivationRef::Leaf { leaf_id } => roots.derive_leaf_key(leaf_id).map_err(|e| e.to_string()),
         KeyDerivationRef::Deposit => Ok(roots.deposit.private_key),
-        KeyDerivationRef::StaticDeposit { idx } => {
-            roots.static_deposit_private_key(*idx).map_err(|e| e.to_string())
-        }
+        KeyDerivationRef::StaticDeposit { idx } => roots.static_deposit_private_key(*idx).map_err(|e| e.to_string()),
         KeyDerivationRef::Ecies { ciphertext } => {
             let plaintext = corisco_crypto_core::decrypt_ecies(ciphertext, &roots.identity.private_key)?;
             plaintext
@@ -95,8 +93,7 @@ fn handle_request(signer: &Arc<Signer>, responder: ResponseChannel, req: Request
             amount_sats,
             destination,
         } => {
-            let Some((nonce, self_commitment)) = signer.pending_commitments.lock().unwrap().take(commitment_id)
-            else {
+            let Some((nonce, self_commitment)) = signer.pending_commitments.lock().unwrap().take(commitment_id) else {
                 return Some(err(format!("unknown or already-used commitment_id: {commitment_id}")));
             };
 
@@ -274,10 +271,26 @@ pub fn complete_sign(req: Box<SignConfirmationRequest>, accept: bool) {
 
 /// Work moved off the NimBLE host task's stack (see `handle_request`).
 pub enum DeferredRequest {
-    Commit { signer: Arc<Signer>, responder: ResponseChannel },
-    GetLeafPublicKey { signer: Arc<Signer>, leaf_id: String, responder: ResponseChannel },
-    SignSchnorrIdentity { signer: Arc<Signer>, message: Vec<u8>, responder: ResponseChannel },
-    SignEcdsaIdentity { signer: Arc<Signer>, message: Vec<u8>, compact: bool, responder: ResponseChannel },
+    Commit {
+        signer: Arc<Signer>,
+        responder: ResponseChannel,
+    },
+    GetLeafPublicKey {
+        signer: Arc<Signer>,
+        leaf_id: String,
+        responder: ResponseChannel,
+    },
+    SignSchnorrIdentity {
+        signer: Arc<Signer>,
+        message: Vec<u8>,
+        responder: ResponseChannel,
+    },
+    SignEcdsaIdentity {
+        signer: Arc<Signer>,
+        message: Vec<u8>,
+        compact: bool,
+        responder: ResponseChannel,
+    },
     SubtractAndSplitSecretWithProofs {
         signer: Arc<Signer>,
         first: KeyDerivationRef,
@@ -286,9 +299,15 @@ pub enum DeferredRequest {
         num_shares: u32,
         responder: ResponseChannel,
     },
-    DecryptEciesToPublicKey { signer: Arc<Signer>, ciphertext: Vec<u8>, responder: ResponseChannel },
+    DecryptEciesToPublicKey {
+        signer: Arc<Signer>,
+        ciphertext: Vec<u8>,
+        responder: ResponseChannel,
+    },
     /// A `Sign` that needs no on-screen confirmation.
-    AutoSign { req: Box<SignConfirmationRequest> },
+    AutoSign {
+        req: Box<SignConfirmationRequest>,
+    },
     SubtractSplitAndEncrypt {
         signer: Arc<Signer>,
         first: KeyDerivationRef,
@@ -305,16 +324,14 @@ pub fn run_deferred(req: DeferredRequest) {
     match req {
         DeferredRequest::Commit { signer, responder } => {
             let response = match corisco_crypto_core::frost::frost_commit(&signer.roots.identity.private_key) {
-                Ok((nonce, commitment)) => {
-                    match (commitment.hiding().serialize(), commitment.binding().serialize()) {
-                        (Ok(hiding), Ok(binding)) => {
-                            let commitment_id = signer.next_commitment_id.fetch_add(1, Ordering::Relaxed);
-                            signer.pending_commitments.lock().unwrap().insert(commitment_id, (nonce, commitment));
-                            Response::Commit { commitment_id, hiding, binding }
-                        }
-                        (Err(e), _) | (_, Err(e)) => err(format!("{e:?}")),
+                Ok((nonce, commitment)) => match (commitment.hiding().serialize(), commitment.binding().serialize()) {
+                    (Ok(hiding), Ok(binding)) => {
+                        let commitment_id = signer.next_commitment_id.fetch_add(1, Ordering::Relaxed);
+                        signer.pending_commitments.lock().unwrap().insert(commitment_id, (nonce, commitment));
+                        Response::Commit { commitment_id, hiding, binding }
                     }
-                }
+                    (Err(e), _) | (_, Err(e)) => err(format!("{e:?}")),
+                },
                 Err(e) => err(format!("{e:?}")),
             };
             responder.send(&response);
@@ -343,24 +360,36 @@ pub fn run_deferred(req: DeferredRequest) {
             };
             responder.send(&response);
         }
-        DeferredRequest::SubtractAndSplitSecretWithProofs { signer, first, second, threshold, num_shares, responder } => {
+        DeferredRequest::SubtractAndSplitSecretWithProofs {
+            signer,
+            first,
+            second,
+            threshold,
+            num_shares,
+            responder,
+        } => {
             let Some(claimed_leaf_id) = KeyDerivationRef::claim_leaf_id(&first, &second).map(str::to_owned) else {
                 responder.send(&err("SubtractAndSplitSecretWithProofs only tweaks an incoming key onto a leaf"));
                 return;
             };
-            let response = match (resolve_private_key(&signer.roots, &first), resolve_private_key(&signer.roots, &second)) {
-                (Ok(a), Ok(b)) => {
-                    let diff = corisco_crypto_core::subtract_private_keys(&a, &b);
-                    match corisco_crypto_core::vss::split_secret_with_proofs(&diff, threshold as usize, num_shares as usize) {
-                        Ok(shares) => {
-                            signer.claimed_leaves.lock().unwrap().authorize(claimed_leaf_id);
-                            Response::Shares { shares: shares.into_iter().map(share_wire).collect() }
+            let response =
+                match (resolve_private_key(&signer.roots, &first), resolve_private_key(&signer.roots, &second)) {
+                    (Ok(a), Ok(b)) => {
+                        let diff = corisco_crypto_core::subtract_private_keys(&a, &b);
+                        match corisco_crypto_core::vss::split_secret_with_proofs(
+                            &diff,
+                            threshold as usize,
+                            num_shares as usize,
+                        ) {
+                            Ok(shares) => {
+                                signer.claimed_leaves.lock().unwrap().authorize(claimed_leaf_id);
+                                Response::Shares { shares: shares.into_iter().map(share_wire).collect() }
+                            }
+                            Err(e) => err(e),
                         }
-                        Err(e) => err(e),
                     }
-                }
-                (Err(e), _) | (_, Err(e)) => err(e),
-            };
+                    (Err(e), _) | (_, Err(e)) => err(e),
+                };
             responder.send(&response);
         }
         DeferredRequest::DecryptEciesToPublicKey { signer, ciphertext, responder } => {
@@ -394,28 +423,35 @@ pub fn run_deferred(req: DeferredRequest) {
                 responder.send(&err("SubtractSplitAndEncrypt only encrypts to the Spark service provider"));
                 return;
             }
-            let response = match (resolve_private_key(&signer.roots, &first), resolve_private_key(&signer.roots, &second)) {
-                (Ok(a), Ok(b)) => {
-                    let diff = corisco_crypto_core::subtract_private_keys(&a, &b);
-                    match corisco_crypto_core::vss::split_secret_with_proofs(&diff, threshold as usize, num_shares as usize) {
-                        Ok(shares) => match <[u8; 33]>::try_from(receiver_public_key.as_slice()) {
-                            Ok(receiver_public_key) => match corisco_crypto_core::encrypt_ecies(&b, &receiver_public_key) {
-                                Ok(secret_cipher) => Response::SubtractSplitAndEncrypt {
-                                    shares: shares.into_iter().map(share_wire).collect(),
-                                    secret_cipher,
-                                },
-                                Err(e) => err(e),
+            let response =
+                match (resolve_private_key(&signer.roots, &first), resolve_private_key(&signer.roots, &second)) {
+                    (Ok(a), Ok(b)) => {
+                        let diff = corisco_crypto_core::subtract_private_keys(&a, &b);
+                        match corisco_crypto_core::vss::split_secret_with_proofs(
+                            &diff,
+                            threshold as usize,
+                            num_shares as usize,
+                        ) {
+                            Ok(shares) => match <[u8; 33]>::try_from(receiver_public_key.as_slice()) {
+                                Ok(receiver_public_key) => {
+                                    match corisco_crypto_core::encrypt_ecies(&b, &receiver_public_key) {
+                                        Ok(secret_cipher) => Response::SubtractSplitAndEncrypt {
+                                            shares: shares.into_iter().map(share_wire).collect(),
+                                            secret_cipher,
+                                        },
+                                        Err(e) => err(e),
+                                    }
+                                }
+                                Err(_) => err(format!(
+                                    "receiver_public_key must be 33 bytes, got {}",
+                                    receiver_public_key.len()
+                                )),
                             },
-                            Err(_) => err(format!(
-                                "receiver_public_key must be 33 bytes, got {}",
-                                receiver_public_key.len()
-                            )),
-                        },
-                        Err(e) => err(e),
+                            Err(e) => err(e),
+                        }
                     }
-                }
-                (Err(e), _) | (_, Err(e)) => err(e),
-            };
+                    (Err(e), _) | (_, Err(e)) => err(e),
+                };
             responder.send(&response);
         }
     }
@@ -640,12 +676,22 @@ pub fn run(
         );
         request_characteristic.lock().on_write(move |args| {
             let conn_handle = args.desc().conn_handle();
-            on_request_frame(&signer, &reassembly, &response_characteristic, &indicate_state, &indicate_cv, conn_handle, args.recv_data());
+            on_request_frame(
+                &signer,
+                &reassembly,
+                &response_characteristic,
+                &indicate_state,
+                &indicate_cv,
+                conn_handle,
+                args.recv_data(),
+            );
         });
     }
 
     BLEDevice::set_device_name(&device_name())?;
-    advertising.lock().set_data(BLEAdvertisementData::new().name(&device_name()).add_service_uuid(uuid(SERVICE_UUID)))?;
+    advertising
+        .lock()
+        .set_data(BLEAdvertisementData::new().name(&device_name()).add_service_uuid(uuid(SERVICE_UUID)))?;
     advertising.lock().start()?;
     if status_tx.send(BleStatus::Advertising).is_err() {
         log::warn!("ble: no receiver for status display (UI thread gone?)");

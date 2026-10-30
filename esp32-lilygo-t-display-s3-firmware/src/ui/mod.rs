@@ -7,9 +7,9 @@
 use crate::display::Display;
 use crate::touch::Touch;
 use crate::AppWindow;
+use corisco_crypto_core::{mnemonic_gen, seed_lock};
 use firmware_core::storage::{Storage, MAX_PIN_ATTEMPTS};
 use firmware_core::{ble, platform, rng};
-use corisco_crypto_core::{mnemonic_gen, seed_lock};
 use slint::platform::software_renderer::MinimalSoftwareWindow;
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 use std::cell::RefCell;
@@ -27,21 +27,45 @@ enum Purpose {
 
 enum Stage {
     Welcome,
-    WordCount { purpose: Purpose },
-    Mnemonic { words: Vec<String>, seed: [u8; 64], page: usize },
+    WordCount {
+        purpose: Purpose,
+    },
+    Mnemonic {
+        words: Vec<String>,
+        seed: [u8; 64],
+        page: usize,
+    },
     /// `words` are complete wordlist entries; `prefix` is the word in progress.
-    WordEntry { words: Vec<String>, total: usize, prefix: String },
-    SetPinFirst { seed: [u8; 64] },
-    SetPinConfirm { seed: [u8; 64], first_pin: String },
+    WordEntry {
+        words: Vec<String>,
+        total: usize,
+        prefix: String,
+    },
+    SetPinFirst {
+        seed: [u8; 64],
+    },
+    SetPinConfirm {
+        seed: [u8; 64],
+        first_pin: String,
+    },
     Unlock,
     /// Terminal: caller should return this seed.
     Done([u8; 64]),
     /// Terminal: nothing to do until a reboot.
     Wiped,
-    PendingGenerateMnemonic { word_count: usize },
-    PendingEncrypt { seed: [u8; 64], pin: String },
-    PendingDecrypt { pin: String },
-    PendingValidateRecovery { words: Vec<String> },
+    PendingGenerateMnemonic {
+        word_count: usize,
+    },
+    PendingEncrypt {
+        seed: [u8; 64],
+        pin: String,
+    },
+    PendingDecrypt {
+        pin: String,
+    },
+    PendingValidateRecovery {
+        words: Vec<String>,
+    },
 }
 
 struct FlowInner {
@@ -160,17 +184,14 @@ fn run_pending_work(ui: &AppWindow, stage: Stage, storage: &Storage) -> Stage {
             let t0 = Instant::now();
             let seed = corisco_crypto_core::mnemonic_to_seed(&mnemonic, "");
             log::info!("ui: mnemonic_to_seed took {:?}", t0.elapsed());
-            let words: Vec<String> = mnemonic
-                .to_string()
-                .split_whitespace()
-                .enumerate()
-                .map(|(i, w)| format!("{}. {w}", i + 1))
-                .collect();
+            let words: Vec<String> =
+                mnemonic.to_string().split_whitespace().enumerate().map(|(i, w)| format!("{}. {w}", i + 1)).collect();
             Stage::Mnemonic { words, seed, page: 0 }
         }
         Stage::PendingEncrypt { seed, pin } => {
             let t0 = Instant::now();
-            let enc = seed_lock::encrypt_seed_with_randomness(&seed, &pin, rng::random_salt_16(), rng::random_nonce_12());
+            let enc =
+                seed_lock::encrypt_seed_with_randomness(&seed, &pin, rng::random_salt_16(), rng::random_nonce_12());
             log::info!("ui: encrypt_seed_with_randomness took {:?}", t0.elapsed());
             match storage.store(&enc) {
                 Ok(()) => Stage::Done(seed),

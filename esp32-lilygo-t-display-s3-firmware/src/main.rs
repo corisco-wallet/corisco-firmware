@@ -51,22 +51,14 @@ fn main() -> anyhow::Result<()> {
     let mut storage_handle: Option<std::rc::Rc<storage::Storage>> = None;
     let onboarded_roots = if let (Some(display), Some(touch)) = (display.as_ref(), touch.as_mut()) {
         let w = platform::EspPlatform::init(display::WIDTH, display::HEIGHT);
-        let storage = std::rc::Rc::new(
-            storage::Storage::init(nvs.clone()).expect("NVS storage should initialize"),
-        );
+        let storage = std::rc::Rc::new(storage::Storage::init(nvs.clone()).expect("NVS storage should initialize"));
         let already_provisioned = storage.is_provisioned().unwrap_or(false);
-        info!(
-            "ui: starting {} flow",
-            if already_provisioned { "unlock" } else { "onboarding" }
-        );
+        info!("ui: starting {} flow", if already_provisioned { "unlock" } else { "onboarding" });
         let result = match ui::run_onboarding_or_unlock(&w, display, touch, storage.clone(), already_provisioned) {
             Ok((ui, seed)) => {
                 let roots = corisco_crypto_core::SparkKeyRoots::from_seed(&seed, 0)
                     .expect("key derivation should not fail for this seed");
-                info!(
-                    "ui: flow complete, identity pubkey: {}",
-                    hex::encode(roots.identity.public_key_compressed())
-                );
+                info!("ui: flow complete, identity pubkey: {}", hex::encode(roots.identity.public_key_compressed()));
                 app_ui = Some(ui);
                 Some(roots)
             }
@@ -106,11 +98,7 @@ fn main() -> anyhow::Result<()> {
     info!(
         "heap before BLE spawn: free={} largest_free_block={}",
         unsafe { esp_idf_svc::sys::esp_get_free_heap_size() },
-        unsafe {
-            esp_idf_svc::sys::heap_caps_get_largest_free_block(
-                esp_idf_svc::sys::MALLOC_CAP_INTERNAL,
-            )
-        }
+        unsafe { esp_idf_svc::sys::heap_caps_get_largest_free_block(esp_idf_svc::sys::MALLOC_CAP_INTERNAL,) }
     );
     let (passkey_tx, passkey_rx) = mpsc::channel();
     let (confirm_tx, confirm_rx) = mpsc::channel::<Box<ble::SignConfirmationRequest>>();
@@ -280,9 +268,7 @@ fn main() -> anyhow::Result<()> {
                     ui.set_sign_leaf_id_short(short_id(&req.leaf_id).into());
                     ui.set_sign_fingerprint(fingerprint(&req.message).into());
                     // Empty means "not supplied"; the UI falls back to leaf id and fingerprint.
-                    ui.set_sign_amount_sats(
-                        req.amount_sats.map(|a| a.to_string()).unwrap_or_default().into(),
-                    );
+                    ui.set_sign_amount_sats(req.amount_sats.map(|a| a.to_string()).unwrap_or_default().into());
                     ui.set_sign_destination(req.destination.clone().unwrap_or_default().into());
                     *pending_sign.borrow_mut() = Some(req);
                     ui.set_screen(4);

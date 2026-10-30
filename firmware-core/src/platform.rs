@@ -86,7 +86,11 @@ pub fn render_frame<D: DisplayDriver>(window: &MinimalSoftwareWindow, display: &
 
 /// Feeds a touch reading into Slint. The release reuses the last position because `clicked` only
 /// fires when press and release both land inside the area.
-pub fn dispatch_touch<T: TouchDriver>(window: &MinimalSoftwareWindow, touch: &mut T, last_position: &mut Option<LogicalPosition>) {
+pub fn dispatch_touch<T: TouchDriver>(
+    window: &MinimalSoftwareWindow,
+    touch: &mut T,
+    last_position: &mut Option<LogicalPosition>,
+) {
     match touch.poll() {
         Some(ev) => {
             let position = LogicalPosition::new(ev.x as f32, ev.y as f32);

@@ -36,9 +36,7 @@ impl Touch {
         let rst_pin = PinDriver::output(rst_pin)?;
 
         let mut inner = CST816S::new(i2c, int_pin, rst_pin);
-        inner
-            .setup(&mut FreeRtos)
-            .map_err(|e| anyhow::anyhow!("cst816s setup failed: {e:?}"))?;
+        inner.setup(&mut FreeRtos).map_err(|e| anyhow::anyhow!("cst816s setup failed: {e:?}"))?;
 
         Ok(Self { inner })
     }

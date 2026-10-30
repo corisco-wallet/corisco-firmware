@@ -46,11 +46,18 @@ pub enum Request {
     },
     GetIdentityPublicKey,
     GetDepositPublicKey,
-    GetLeafPublicKey { leaf_id: String },
-    SignSchnorrIdentity { message: Vec<u8> },
+    GetLeafPublicKey {
+        leaf_id: String,
+    },
+    SignSchnorrIdentity {
+        message: Vec<u8>,
+    },
     /// Mirrors `signMessageWithIdentityKey(message, compact?)`; `message`
     /// here is always a 32-byte digest.
-    SignEcdsaIdentity { message: Vec<u8>, compact: bool },
+    SignEcdsaIdentity {
+        message: Vec<u8>,
+        compact: bool,
+    },
     /// Claim key tweak (`subtractAndSplitSecretWithProofsGivenDerivations`): subtract two derived
     /// keys and Shamir-split the difference, with Feldman proofs, for the Signing Operators.
     SubtractAndSplitSecretWithProofs {
@@ -61,7 +68,9 @@ pub enum Request {
     },
     /// `decryptEcies`: returns only the public key of the decrypted private key. The SDK's claim
     /// verification needs it.
-    DecryptEciesToPublicKey { ciphertext: Vec<u8> },
+    DecryptEciesToPublicKey {
+        ciphertext: Vec<u8>,
+    },
     /// `subtractSplitAndEncrypt`: the sending-side leaf swap, like `SubtractAndSplitSecretWithProofs`
     /// plus the new key ECIES-encrypted to the receiver.
     SubtractSplitAndEncrypt {
@@ -76,11 +85,17 @@ pub enum Request {
 /// Mirrors the SDK's `KeyDerivation` union.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum KeyDerivationRef {
-    Leaf { leaf_id: String },
+    Leaf {
+        leaf_id: String,
+    },
     Deposit,
-    StaticDeposit { idx: u32 },
+    StaticDeposit {
+        idx: u32,
+    },
     /// Raw ECIES ciphertext, decrypted with the identity key.
-    Ecies { ciphertext: Vec<u8> },
+    Ecies {
+        ciphertext: Vec<u8>,
+    },
     Random,
 }
 
