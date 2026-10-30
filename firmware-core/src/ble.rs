@@ -1,68 +1,27 @@
-//! BLE GATT signing service -- the transport between the phone app and the
-//! device's signing logic. A binary (`postcard`) request/response protocol
-//! (commit/sign/identity-key ops) since BLE payloads are precious.
+//! BLE GATT signing service between the phone app and the device's keys.
 //!
-//! Built on the `esp32-nimble` crate (NimBLE host), not `esp-idf-svc`'s
-//! `bt::ble::gatt` module (Bluedroid) -- Bluedroid's advertising was
-//! deterministically rejected by the controller on this chip/IDF version
-//! ("Cmd Disallowed" on every `start_advertising()` HCI call). NimBLE is
-//! also ESP-IDF's own recommended host stack for BLE-only chips like the S3.
+//! Uses NimBLE (`esp32-nimble`), not Bluedroid: the controller rejects Bluedroid's advertising on
+//! this chip/IDF version ("Cmd Disallowed").
 //!
-//! ## Pairing
-//!
-//! Real BLE bonding, not an open connection: `SecurityIOCap::DisplayOnly`
-//! (this device has a screen, no keyboard) -- the phone's OS shows "Enter
-//! the PIN shown on [device]", and `on_passkey_request` generates a fresh
-//! random 6-digit passkey per pairing attempt (not a fixed one) and shows
-//! it via `passkey_tx`. `CONFIG_BT_NIMBLE_NVS_PERSIST=y` (sdkconfig.defaults)
-//! keeps the bond across reboots, so this only happens once per phone.
-//!
-//! ## Protocol
-//!
-//! One service, two characteristics:
-//! - **Request** (write, encrypted+authenticated): phone -> device. A
-//!   `Request` (see below), postcard-encoded, then split into frames (see
-//!   "Framing").
-//! - **Response** (indicate): device -> phone. A `Response`, framed the
-//!   same way.
-//!
-//! Only one request may be in flight at a time -- matches the HSM/hardware-
-//! wallet model (no concurrent signing operations), and keeps reassembly
-//! trivial (no request-id multiplexing needed at the framing layer).
-//!
-//! ## Framing
-//!
-//! BLE's negotiated ATT MTU (default 23, phones commonly negotiate up to
-//! ~185-247) caps how much fits in one write/indication. Rather than assume
-//! a large MTU gets negotiated, every message (request or response) is
-//! split into frames:
-//! - First frame: `[len_lo, len_hi, payload...]` -- `len` is the total
-//!   postcard-encoded message length (u16 LE, so up to 64KB -- generous for
-//!   what these messages ever need).
-//! - Continuation frames: raw payload bytes, no header.
-//!
-//! The receiver buffers frames until it has collected `len` bytes, then
-//! postcard-decodes. Indications (not notifications) are used for responses
-//! specifically because they're confirmed at the link layer -- sending the
-//! next frame only after the previous one is confirmed gives us in-order,
-//! no-loss delivery for free, without a bespoke ACK scheme on top.
-//! `on_notify_tx` is esp32-nimble's confirmation signal for this.
+//! Framing: one request in flight; the first frame is `[len_lo, len_hi, payload...]` and the rest
+//! are raw payload, so nothing depends on a large MTU. Responses are indications, each sent only
+//! after the previous one is confirmed, which gives in-order delivery without a custom ACK.
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Condvar, Mutex};
 
+use corisco_crypto_core::frost::{NonceCommitment, SigningCommitments, SigningNonces};
+use corisco_crypto_core::SparkKeyRoots;
 use esp32_nimble::utilities::mutex::Mutex as NimbleMutex;
 use esp32_nimble::utilities::BleUuid;
 use esp32_nimble::{enums::*, BLEAdvertisementData, BLECharacteristic, BLEDevice, NimbleProperties};
 use frost_secp256k1_tr::Identifier;
 use log::info;
-use corisco_crypto_core::frost::{NonceCommitment, SigningCommitments, SigningNonces};
-use corisco_crypto_core::SparkKeyRoots;
 
-pub use corisco_protocol::{REQUEST_CHARACTERISTIC_UUID, RESPONSE_CHARACTERISTIC_UUID, SERVICE_UUID};
 use corisco_protocol::{KeyDerivationRef, Request, Response, ShareWire};
+pub use corisco_protocol::{REQUEST_CHARACTERISTIC_UUID, RESPONSE_CHARACTERISTIC_UUID, SERVICE_UUID};
 
 use crate::pending::{AuthorizedLeaves, PendingStore};
 
@@ -73,17 +32,11 @@ fn uuid(id: u128) -> BleUuid {
     BleUuid::Uuid128(id.to_le_bytes())
 }
 
-// ---------------------------------------------------------------------------
-// Wire protocol
-// ---------------------------------------------------------------------------
-
 fn resolve_private_key(roots: &SparkKeyRoots, d: &KeyDerivationRef) -> Result<[u8; 32], String> {
     match d {
         KeyDerivationRef::Leaf { leaf_id } => roots.derive_leaf_key(leaf_id).map_err(|e| e.to_string()),
         KeyDerivationRef::Deposit => Ok(roots.deposit.private_key),
-        KeyDerivationRef::StaticDeposit { idx } => {
-            roots.static_deposit_private_key(*idx).map_err(|e| e.to_string())
-        }
+        KeyDerivationRef::StaticDeposit { idx } => roots.static_deposit_private_key(*idx).map_err(|e| e.to_string()),
         KeyDerivationRef::Ecies { ciphertext } => {
             let plaintext = corisco_crypto_core::decrypt_ecies(ciphertext, &roots.identity.private_key)?;
             plaintext
@@ -94,8 +47,7 @@ fn resolve_private_key(roots: &SparkKeyRoots, d: &KeyDerivationRef) -> Result<[u
     }
 }
 
-/// `ShareWire` lives in `corisco-protocol`, so this can't be a `From` impl
-/// (orphan rule).
+/// `ShareWire` lives in `corisco-protocol`, so this can't be a `From` impl (orphan rule).
 fn share_wire(vs: corisco_crypto_core::vss::VerifiableSecretShare) -> ShareWire {
     ShareWire {
         threshold: vs.share.threshold as u32,
@@ -109,41 +61,26 @@ fn err(message: impl std::fmt::Display) -> Response {
     Response::Error { message: message.to_string() }
 }
 
-/// Returns `None` for `Commit`, `Sign`, `GetLeafPublicKey`,
-/// `SignSchnorrIdentity`, and `SignEcdsaIdentity` -- every request that
-/// does *fresh* elliptic-curve computation (BIP32 derivation, FROST nonce
-/// generation, Schnorr/ECDSA signing) defers that work off this call stack
-/// (see `DeferredRequest`/`run_deferred`, `complete_sign`). This isn't
-/// optional: this function runs synchronously inside `on_write`, on the
-/// NimBLE host task's own (deliberately small) stack, which overflows
-/// partway through this kind of math if it runs inline. Bumping
-/// `CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE` to accommodate it isn't viable
-/// either -- total internal RAM is tight enough (~150KB free/~90KB largest
-/// contiguous block right before BLE even starts, competing with the main
-/// task's 128KB stack) that a large-enough bump starves NimBLE's own
-/// internal buffers instead (`BLE_ERR_MEM_CAPACITY` on
-/// `advertising.lock().start()`). `GetIdentityPublicKey`/
-/// `GetDepositPublicKey` are the only pubkey-shaped requests answered
-/// inline -- they just return bytes already computed once at boot
-/// (`SparkKeyRoots`), no fresh math at all.
+/// Returns `None` when the work is deferred: fresh EC math overflows the NimBLE host task's stack,
+/// and RAM is too tight to grow that stack without starving NimBLE's own buffers.
 fn handle_request(signer: &Arc<Signer>, responder: ResponseChannel, req: Request) -> Option<Response> {
     let roots = &signer.roots;
-    let defer = |work: DeferredRequest| -> Option<Response> {
-        if signer.work_tx.send(work).is_err() {
+    let defer = |work: Work| -> Option<Response> {
+        if signer.work_tx.send(DeferredRequest(work)).is_err() {
             return Some(err("no deferred-work receiver (main thread gone?)"));
         }
         None
     };
     Some(match req {
-        Request::Commit => return defer(DeferredRequest::Commit { signer: signer.clone(), responder }),
+        Request::Commit => return defer(Work::Commit { signer: signer.clone(), responder }),
         Request::GetLeafPublicKey { leaf_id } => {
-            return defer(DeferredRequest::GetLeafPublicKey { signer: signer.clone(), leaf_id, responder })
+            return defer(Work::GetLeafPublicKey { signer: signer.clone(), leaf_id, responder })
         }
         Request::SignSchnorrIdentity { message } => {
-            return defer(DeferredRequest::SignSchnorrIdentity { signer: signer.clone(), message, responder })
+            return defer(Work::SignSchnorrIdentity { signer: signer.clone(), message, responder })
         }
         Request::SignEcdsaIdentity { message, compact } => {
-            return defer(DeferredRequest::SignEcdsaIdentity { signer: signer.clone(), message, compact, responder })
+            return defer(Work::SignEcdsaIdentity { signer: signer.clone(), message, compact, responder })
         }
         Request::Sign {
             commitment_id,
@@ -156,8 +93,7 @@ fn handle_request(signer: &Arc<Signer>, responder: ResponseChannel, req: Request
             amount_sats,
             destination,
         } => {
-            let Some((nonce, self_commitment)) = signer.pending_commitments.lock().unwrap().take(commitment_id)
-            else {
+            let Some((nonce, self_commitment)) = signer.pending_commitments.lock().unwrap().take(commitment_id) else {
                 return Some(err(format!("unknown or already-used commitment_id: {commitment_id}")));
             };
 
@@ -183,16 +119,8 @@ fn handle_request(signer: &Arc<Signer>, responder: ResponseChannel, req: Request
                 statechain_commitment_map.insert(id, SigningCommitments::new(hiding, binding));
             }
 
-            // Boxed, not sent by value: `std::sync::mpmc`'s channel
-            // allocates each internal storage block sized for ~31 slots of
-            // the element type at once, and `SignConfirmationRequest`
-            // (full FROST nonce/commitment structs, not just ids) is large
-            // enough that one such block is itself a ~20.7KB allocation --
-            // a real risk on a chip this tight on contiguous internal RAM
-            // (a live BLE connection's own GATT/security/MTU overhead
-            // alone costs ~90-100KB). Boxing shrinks each channel slot to
-            // a pointer, cutting that one-time block allocation by roughly
-            // the same factor as `SignConfirmationRequest`'s own size.
+            // Boxed: mpsc allocates ~31 slots per block, and by value this struct makes that a
+            // ~20KB allocation on a chip short of contiguous internal RAM.
             let confirm_req = Box::new(SignConfirmationRequest {
                 leaf_id,
                 message,
@@ -207,15 +135,14 @@ fn handle_request(signer: &Arc<Signer>, responder: ResponseChannel, req: Request
                 responder,
             });
             // Default deny: only a leaf this device saw being claimed may skip the prompt, and the
-            // phone's flag can only add a prompt, never remove one. The Settings toggle still
-            // overrides everything when the user has turned confirmation off on-device.
+            // phone's flag can only add one. The on-device Settings toggle overrides both.
             let claim_authorized = signer.claimed_leaves.lock().unwrap().is_authorized(&confirm_req.leaf_id);
             let needs_prompt = requires_confirmation || !claim_authorized;
             if needs_prompt && signer.require_confirmation.load(Ordering::Relaxed) {
                 if signer.confirm_tx.send(confirm_req).is_err() {
                     return Some(err("no confirmation receiver (UI thread gone?)"));
                 }
-            } else if signer.work_tx.send(DeferredRequest::AutoSign { req: confirm_req }).is_err() {
+            } else if signer.work_tx.send(DeferredRequest(Work::AutoSign { req: confirm_req })).is_err() {
                 return Some(err("no deferred-work receiver (main thread gone?)"));
             }
             return None;
@@ -227,7 +154,7 @@ fn handle_request(signer: &Arc<Signer>, responder: ResponseChannel, req: Request
             Response::PublicKey { public_key: roots.deposit.public_key_compressed().to_vec() }
         }
         Request::SubtractAndSplitSecretWithProofs { first, second, threshold, num_shares } => {
-            return defer(DeferredRequest::SubtractAndSplitSecretWithProofs {
+            return defer(Work::SubtractAndSplitSecretWithProofs {
                 signer: signer.clone(),
                 first,
                 second,
@@ -237,10 +164,10 @@ fn handle_request(signer: &Arc<Signer>, responder: ResponseChannel, req: Request
             })
         }
         Request::DecryptEciesToPublicKey { ciphertext } => {
-            return defer(DeferredRequest::DecryptEciesToPublicKey { signer: signer.clone(), ciphertext, responder })
+            return defer(Work::DecryptEciesToPublicKey { signer: signer.clone(), ciphertext, responder })
         }
         Request::SubtractSplitAndEncrypt { first, second, receiver_public_key, threshold, num_shares } => {
-            return defer(DeferredRequest::SubtractSplitAndEncrypt {
+            return defer(Work::SubtractSplitAndEncrypt {
                 signer: signer.clone(),
                 first,
                 second,
@@ -253,12 +180,6 @@ fn handle_request(signer: &Arc<Signer>, responder: ResponseChannel, req: Request
     })
 }
 
-// ---------------------------------------------------------------------------
-// GATT server plumbing (esp32-nimble)
-// ---------------------------------------------------------------------------
-
-/// Buffers frames arriving on the Request characteristic until a full
-/// message has been collected (see module doc "Framing").
 #[derive(Default)]
 struct RequestReassembly {
     expected_len: Option<usize>,
@@ -278,32 +199,17 @@ struct Signer {
     claimed_leaves: Mutex<AuthorizedLeaves>,
     confirm_tx: mpsc::Sender<Box<SignConfirmationRequest>>,
     work_tx: mpsc::Sender<DeferredRequest>,
-    /// Device-level override of the wire protocol's own
-    /// `requires_confirmation` flag -- the Settings screen's "require
-    /// confirmation" toggle (`main.rs`'s wiring), shared so flipping it
-    /// takes effect on the very next `Sign` with no reboot needed. `false`
-    /// means every `Sign` auto-signs regardless of what the app requested
-    /// -- see `handle_request`'s `Request::Sign` arm, the only place this
-    /// is read. Seeded at boot from `storage::Storage::get_require_confirmation`
-    /// (defaults to `true`, the safe choice, if never explicitly set).
+    /// The on-device Settings toggle; `false` auto-signs every `Sign` regardless of the app's flag.
     require_confirmation: Arc<AtomicBool>,
 }
 
-/// Tracks whether the most recently sent indication has been confirmed
-/// yet -- `send_response_frames` blocks on this (via the paired
-/// `Condvar`) so it only sends the next frame once the previous one is
-/// acknowledged. Signaled from `on_notify_tx`, which esp32-nimble calls
-/// once a notify/indicate attempt completes (success or failure).
+/// Set while an indication is unconfirmed; `on_notify_tx` clears it so the next frame can go.
 #[derive(Default)]
 struct IndicateState {
     awaiting_confirm: bool,
 }
 
-/// Everything needed to send a response to a specific connection later,
-/// after a `Sign` request has been deferred to the UI thread for
-/// confirmation -- the same pieces `on_request_frame` already had in
-/// scope for an immediate response, just bundled so they can travel
-/// inside a `SignConfirmationRequest` instead.
+/// Everything needed to answer a connection later, from another thread.
 #[derive(Clone)]
 struct ResponseChannel {
     response_characteristic: Arc<NimbleMutex<BLECharacteristic>>,
@@ -327,13 +233,7 @@ impl ResponseChannel {
     }
 }
 
-/// A `Sign` request waiting on the on-screen confirmation gate. `leaf_id`/
-/// `message` are the fallback the UI shows when the app didn't supply
-/// `amount_sats`/`destination` (see `Request::Sign`'s doc comment on why
-/// those are app-asserted, not verified); everything else is exactly what
-/// `frost_sign` needs, already validated and looked up by `handle_request`
-/// before deferring here, so `complete_sign` can just run it directly on
-/// accept.
+/// A validated `Sign` request waiting on the on-screen confirmation.
 pub struct SignConfirmationRequest {
     pub leaf_id: String,
     pub message: Vec<u8>,
@@ -348,10 +248,7 @@ pub struct SignConfirmationRequest {
     responder: ResponseChannel,
 }
 
-/// Runs the real signature (on accept) or sends an `Error` response (on
-/// decline), completing a request `handle_request` deferred earlier.
-/// Called from the UI thread once the user taps Accept/Decline on the
-/// confirmation screen.
+/// Signs on accept or answers with an error on decline; called from the UI thread.
 pub fn complete_sign(req: Box<SignConfirmationRequest>, accept: bool) {
     let response = if !accept {
         err("declined on device")
@@ -372,18 +269,30 @@ pub fn complete_sign(req: Box<SignConfirmationRequest>, accept: bool) {
     req.responder.send(&response);
 }
 
-/// A request waiting on fresh elliptic-curve computation -- deferred off
-/// `on_write`'s stack for the reason `handle_request`'s doc comment
-/// explains, just without any user-facing gate (unlike `Sign`): `run_deferred`
-/// runs it immediately, no accept/decline involved. Carries the whole
-/// `Arc<Signer>` (not just `roots`) since `Commit` also needs to register
-/// the resulting nonce into `pending_commitments` for the eventual
-/// matching `Sign`.
-pub enum DeferredRequest {
-    Commit { signer: Arc<Signer>, responder: ResponseChannel },
-    GetLeafPublicKey { signer: Arc<Signer>, leaf_id: String, responder: ResponseChannel },
-    SignSchnorrIdentity { signer: Arc<Signer>, message: Vec<u8>, responder: ResponseChannel },
-    SignEcdsaIdentity { signer: Arc<Signer>, message: Vec<u8>, compact: bool, responder: ResponseChannel },
+/// Work moved off the NimBLE host task's stack (see `handle_request`).
+pub struct DeferredRequest(Work);
+
+enum Work {
+    Commit {
+        signer: Arc<Signer>,
+        responder: ResponseChannel,
+    },
+    GetLeafPublicKey {
+        signer: Arc<Signer>,
+        leaf_id: String,
+        responder: ResponseChannel,
+    },
+    SignSchnorrIdentity {
+        signer: Arc<Signer>,
+        message: Vec<u8>,
+        responder: ResponseChannel,
+    },
+    SignEcdsaIdentity {
+        signer: Arc<Signer>,
+        message: Vec<u8>,
+        compact: bool,
+        responder: ResponseChannel,
+    },
     SubtractAndSplitSecretWithProofs {
         signer: Arc<Signer>,
         first: KeyDerivationRef,
@@ -392,13 +301,15 @@ pub enum DeferredRequest {
         num_shares: u32,
         responder: ResponseChannel,
     },
-    DecryptEciesToPublicKey { signer: Arc<Signer>, ciphertext: Vec<u8>, responder: ResponseChannel },
-    /// A `Sign` request with `requires_confirmation: false` -- same
-    /// `frost_sign` computation `complete_sign` runs on Accept, just
-    /// triggered automatically instead of waiting on a screen tap. Reuses
-    /// `SignConfirmationRequest` as-is (no on-screen use of its
-    /// `leaf_id`/`message` fields here) rather than a separate struct.
-    AutoSign { req: Box<SignConfirmationRequest> },
+    DecryptEciesToPublicKey {
+        signer: Arc<Signer>,
+        ciphertext: Vec<u8>,
+        responder: ResponseChannel,
+    },
+    /// A `Sign` that needs no on-screen confirmation.
+    AutoSign {
+        req: Box<SignConfirmationRequest>,
+    },
     SubtractSplitAndEncrypt {
         signer: Arc<Signer>,
         first: KeyDerivationRef,
@@ -410,49 +321,37 @@ pub enum DeferredRequest {
     },
 }
 
-/// Runs the real computation and sends the response (or an `Error` on
-/// failure). Called from the main/UI thread's render loop, which has a
-/// proven-sufficient stack for this class of curve math (it's the same
-/// thread `frost_self_test` already runs on at boot) -- see
-/// `handle_request`'s doc comment for why this can't run inline in
-/// `on_write` instead.
+/// Runs deferred work on the main thread, whose stack is sized for curve math.
 pub fn run_deferred(req: DeferredRequest) {
-    match req {
-        DeferredRequest::Commit { signer, responder } => {
+    match req.0 {
+        Work::Commit { signer, responder } => {
             let response = match corisco_crypto_core::frost::frost_commit(&signer.roots.identity.private_key) {
-                Ok((nonce, commitment)) => {
-                    match (commitment.hiding().serialize(), commitment.binding().serialize()) {
-                        (Ok(hiding), Ok(binding)) => {
-                            let commitment_id = signer.next_commitment_id.fetch_add(1, Ordering::Relaxed);
-                            signer.pending_commitments.lock().unwrap().insert(commitment_id, (nonce, commitment));
-                            Response::Commit { commitment_id, hiding, binding }
-                        }
-                        (Err(e), _) | (_, Err(e)) => err(format!("{e:?}")),
+                Ok((nonce, commitment)) => match (commitment.hiding().serialize(), commitment.binding().serialize()) {
+                    (Ok(hiding), Ok(binding)) => {
+                        let commitment_id = signer.next_commitment_id.fetch_add(1, Ordering::Relaxed);
+                        signer.pending_commitments.lock().unwrap().insert(commitment_id, (nonce, commitment));
+                        Response::Commit { commitment_id, hiding, binding }
                     }
-                }
+                    (Err(e), _) | (_, Err(e)) => err(format!("{e:?}")),
+                },
                 Err(e) => err(format!("{e:?}")),
             };
             responder.send(&response);
         }
-        DeferredRequest::GetLeafPublicKey { signer, leaf_id, responder } => {
+        Work::GetLeafPublicKey { signer, leaf_id, responder } => {
             let response = match signer.roots.derive_leaf_public_key(&leaf_id) {
                 Ok(pk) => Response::PublicKey { public_key: pk.to_vec() },
                 Err(e) => err(format!("{e:?}")),
             };
             responder.send(&response);
         }
-        DeferredRequest::SignSchnorrIdentity { signer, message, responder } => {
+        Work::SignSchnorrIdentity { signer, message, responder } => {
             let sig = corisco_crypto_core::sign_schnorr(&signer.roots.identity.private_key, &message);
             responder.send(&Response::Signature { signature: sig.to_bytes().to_vec() });
         }
-        DeferredRequest::SignEcdsaIdentity { signer, message, compact, responder } => {
-            // DER by default (`compact: false`): the SDK's own auth flow
-            // (`SparkWalletClient.authenticate` -> `signMessageWithIdentityKey(hash)`,
-            // no `compact` arg) sends the result straight to spark_authn's
-            // `verify_challenge`, which expects ASN.1 DER and rejects a
-            // compact r||s signature. `k256`'s `ecdsa-core` dependency
-            // already enables its `der` feature unconditionally, so
-            // `to_der()` needs no new dependency here.
+        Work::SignEcdsaIdentity { signer, message, compact, responder } => {
+            // DER unless `compact`: the SDK's auth flow omits `compact`, and spark_authn rejects
+            // compact signatures.
             let response = match <[u8; 32]>::try_from(message.as_slice()) {
                 Ok(digest) => {
                     let sig = corisco_crypto_core::sign_ecdsa_prehashed(&signer.roots.identity.private_key, &digest);
@@ -463,27 +362,32 @@ pub fn run_deferred(req: DeferredRequest) {
             };
             responder.send(&response);
         }
-        DeferredRequest::SubtractAndSplitSecretWithProofs { signer, first, second, threshold, num_shares, responder } => {
+        Work::SubtractAndSplitSecretWithProofs { signer, first, second, threshold, num_shares, responder } => {
             let Some(claimed_leaf_id) = KeyDerivationRef::claim_leaf_id(&first, &second).map(str::to_owned) else {
                 responder.send(&err("SubtractAndSplitSecretWithProofs only tweaks an incoming key onto a leaf"));
                 return;
             };
-            let response = match (resolve_private_key(&signer.roots, &first), resolve_private_key(&signer.roots, &second)) {
-                (Ok(a), Ok(b)) => {
-                    let diff = corisco_crypto_core::subtract_private_keys(&a, &b);
-                    match corisco_crypto_core::vss::split_secret_with_proofs(&diff, threshold as usize, num_shares as usize) {
-                        Ok(shares) => {
-                            signer.claimed_leaves.lock().unwrap().authorize(claimed_leaf_id);
-                            Response::Shares { shares: shares.into_iter().map(share_wire).collect() }
+            let response =
+                match (resolve_private_key(&signer.roots, &first), resolve_private_key(&signer.roots, &second)) {
+                    (Ok(a), Ok(b)) => {
+                        let diff = corisco_crypto_core::subtract_private_keys(&a, &b);
+                        match corisco_crypto_core::vss::split_secret_with_proofs(
+                            &diff,
+                            threshold as usize,
+                            num_shares as usize,
+                        ) {
+                            Ok(shares) => {
+                                signer.claimed_leaves.lock().unwrap().authorize(claimed_leaf_id);
+                                Response::Shares { shares: shares.into_iter().map(share_wire).collect() }
+                            }
+                            Err(e) => err(e),
                         }
-                        Err(e) => err(e),
                     }
-                }
-                (Err(e), _) | (_, Err(e)) => err(e),
-            };
+                    (Err(e), _) | (_, Err(e)) => err(e),
+                };
             responder.send(&response);
         }
-        DeferredRequest::DecryptEciesToPublicKey { signer, ciphertext, responder } => {
+        Work::DecryptEciesToPublicKey { signer, ciphertext, responder } => {
             let response = match corisco_crypto_core::decrypt_ecies(&ciphertext, &signer.roots.identity.private_key) {
                 Ok(plaintext) => match <[u8; 32]>::try_from(plaintext.as_slice()) {
                     Ok(private_key) => {
@@ -496,8 +400,8 @@ pub fn run_deferred(req: DeferredRequest) {
             };
             responder.send(&response);
         }
-        DeferredRequest::AutoSign { req } => complete_sign(req, true),
-        DeferredRequest::SubtractSplitAndEncrypt {
+        Work::AutoSign { req } => complete_sign(req, true),
+        Work::SubtractSplitAndEncrypt {
             signer,
             first,
             second,
@@ -514,36 +418,41 @@ pub fn run_deferred(req: DeferredRequest) {
                 responder.send(&err("SubtractSplitAndEncrypt only encrypts to the Spark service provider"));
                 return;
             }
-            let response = match (resolve_private_key(&signer.roots, &first), resolve_private_key(&signer.roots, &second)) {
-                (Ok(a), Ok(b)) => {
-                    let diff = corisco_crypto_core::subtract_private_keys(&a, &b);
-                    match corisco_crypto_core::vss::split_secret_with_proofs(&diff, threshold as usize, num_shares as usize) {
-                        Ok(shares) => match <[u8; 33]>::try_from(receiver_public_key.as_slice()) {
-                            Ok(receiver_public_key) => match corisco_crypto_core::encrypt_ecies(&b, &receiver_public_key) {
-                                Ok(secret_cipher) => Response::SubtractSplitAndEncrypt {
-                                    shares: shares.into_iter().map(share_wire).collect(),
-                                    secret_cipher,
-                                },
-                                Err(e) => err(e),
+            let response =
+                match (resolve_private_key(&signer.roots, &first), resolve_private_key(&signer.roots, &second)) {
+                    (Ok(a), Ok(b)) => {
+                        let diff = corisco_crypto_core::subtract_private_keys(&a, &b);
+                        match corisco_crypto_core::vss::split_secret_with_proofs(
+                            &diff,
+                            threshold as usize,
+                            num_shares as usize,
+                        ) {
+                            Ok(shares) => match <[u8; 33]>::try_from(receiver_public_key.as_slice()) {
+                                Ok(receiver_public_key) => {
+                                    match corisco_crypto_core::encrypt_ecies(&b, &receiver_public_key) {
+                                        Ok(secret_cipher) => Response::SubtractSplitAndEncrypt {
+                                            shares: shares.into_iter().map(share_wire).collect(),
+                                            secret_cipher,
+                                        },
+                                        Err(e) => err(e),
+                                    }
+                                }
+                                Err(_) => err(format!(
+                                    "receiver_public_key must be 33 bytes, got {}",
+                                    receiver_public_key.len()
+                                )),
                             },
-                            Err(_) => err(format!(
-                                "receiver_public_key must be 33 bytes, got {}",
-                                receiver_public_key.len()
-                            )),
-                        },
-                        Err(e) => err(e),
+                            Err(e) => err(e),
+                        }
                     }
-                }
-                (Err(e), _) | (_, Err(e)) => err(e),
-            };
+                    (Err(e), _) | (_, Err(e)) => err(e),
+                };
             responder.send(&response);
         }
     }
 }
 
-/// Sends `payload` to `conn_handle` as a sequence of confirmed
-/// indications, chunked per the connection's negotiated MTU (see module
-/// doc "Framing"). Blocks between frames until each is confirmed.
+/// Sends `payload` as MTU-sized indications, blocking until each one is confirmed.
 fn send_response_frames(
     characteristic: &Arc<NimbleMutex<BLECharacteristic>>,
     indicate_state: &Mutex<IndicateState>,
@@ -589,13 +498,7 @@ fn send_response_frames(
     }
 }
 
-/// Feeds one frame into the reassembly buffer; once a full message has
-/// arrived, decodes + dispatches it. Runs synchronously on the NimBLE host
-/// task's callback -- fine even for `Commit`/`Sign` now, since
-/// `handle_request` never runs their actual curve math itself: it hands
-/// off to `signer.commit_tx`/`signer.confirm_tx` and returns `None`
-/// immediately, and `complete_commit`/`complete_sign` (called later, from
-/// the main/UI thread) are what actually compute and send the response.
+/// Reassembles request frames and dispatches each complete message.
 #[allow(clippy::too_many_arguments)]
 fn on_request_frame(
     signer: &Arc<Signer>,
@@ -649,49 +552,25 @@ fn on_request_frame(
         Err(e) => Some(err(format!("bad request framing/encoding: {e:?}"))),
     };
 
-    // `None` means `handle_request` deferred this to `signer.confirm_tx`
-    // (a `Sign` request awaiting on-screen confirmation) -- the response
-    // will be sent later, by `complete_sign`, not here.
+    // `None`: the deferred work sends the response later.
     if let Some(response) = response {
         responder.send(&response);
     }
 }
 
-/// A passkey shown to the user during pairing -- sent to the UI thread so
-/// it can be displayed on-device (`SecurityIOCap::DisplayOnly` means the
-/// phone can't show it; it must come from us).
+/// Pairing passkey for the UI: with `DisplayOnly` the device itself must show it.
 pub struct PasskeyDisplay {
     pub passkey: u32,
 }
 
-/// Whether the radio is currently advertising (discoverable, no phone
-/// connected yet) or has a phone connected -- sent to the UI thread so the
-/// Home screen can show it instead of leaving BLE state entirely invisible
-/// once past the pairing screen. Only two states: a peripheral can't
-/// advertise while connected (see `on_disconnect`'s doc comment below), so
-/// there's no third "idle/off" state to represent -- the radio is always
-/// doing one or the other once `run` reaches `advertising.lock().start()`.
+/// A peripheral can't advertise while connected, so these are the only two states.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum BleStatus {
     Advertising,
     Connected,
 }
 
-/// Brings up the BLE GATT signing service and blocks forever, servicing
-/// requests as they arrive. `passkey_tx` carries each freshly generated
-/// pairing passkey to the UI thread for display; failing to send (e.g. no
-/// receiver yet) is not fatal -- the phone's own pairing dialog still
-/// shows *something* even if the device-side screen missed it. `confirm_tx`
-/// carries `Sign` requests to the UI thread's confirmation screen -- see
-/// `handle_request`/`complete_sign`. `status_tx` carries advertising/
-/// connected transitions to the UI thread for the Home screen's BLE
-/// indicator -- same "failing to send isn't fatal" treatment as
-/// `passkey_tx`, since a missed status update just means a stale
-/// indicator, not a functional problem. `pairing_done_tx` signals the UI
-/// thread to leave the pairing-passkey screen once bonding actually
-/// finishes -- nothing else tells it to, so without this it would stay
-/// there forever after a successful pair unless something unrelated (a
-/// sign request) happened to change the screen afterward.
+/// Starts the GATT service and blocks forever. Failed sends to the UI are logged, never fatal.
 pub fn run(
     roots: SparkKeyRoots,
     passkey_tx: mpsc::Sender<PasskeyDisplay>,
@@ -703,11 +582,8 @@ pub fn run(
 ) -> anyhow::Result<()> {
     let device = BLEDevice::take();
 
-    // DisplayOnly: this device has a screen, no keyboard -- the phone's OS
-    // shows "Enter the PIN shown on <device>", we generate + display a
-    // fresh 6-digit passkey per pairing attempt (`on_passkey_request`
-    // below), not a single fixed one. `resolve_rpa` handles iOS's private
-    // address rotation for a *bonded* device to keep reconnecting to it.
+    // DisplayOnly: the phone asks for the passkey shown on this screen. `resolve_rpa` keeps bonded
+    // iOS devices reconnecting across private-address rotation.
     device.security().set_auth(AuthReq::all()).set_io_cap(SecurityIOCap::DisplayOnly).resolve_rpa();
 
     let signer = Arc::new(Signer {
@@ -747,14 +623,7 @@ pub fn run(
             }
         });
     }
-    // A peripheral can't advertise while connected -- NimBLE stops
-    // advertising the moment a central connects, and never resumes on its
-    // own. Restarting it here covers every disconnect path (a clean
-    // `disconnect()` from the app, the app dying without one, or the link
-    // simply timing out) with one fix: without it, the device stays
-    // connected from its own perspective after any non-clean disconnect,
-    // with no code path left that would ever call
-    // `advertising.lock().start()` again short of a power cycle.
+    // NimBLE stops advertising on connect and never resumes, so restart it on every disconnect.
     let advertising = device.get_advertising();
     {
         let status_tx = status_tx.clone();
@@ -801,15 +670,22 @@ pub fn run(
         );
         request_characteristic.lock().on_write(move |args| {
             let conn_handle = args.desc().conn_handle();
-            on_request_frame(&signer, &reassembly, &response_characteristic, &indicate_state, &indicate_cv, conn_handle, args.recv_data());
+            on_request_frame(
+                &signer,
+                &reassembly,
+                &response_characteristic,
+                &indicate_state,
+                &indicate_cv,
+                conn_handle,
+                args.recv_data(),
+            );
         });
     }
 
-    // Same `advertising` handle `on_disconnect` above captured -- `&'static
-    // Mutex<_>` is `Copy`, so that `move` closure only copied the
-    // reference, this binding is still valid.
     BLEDevice::set_device_name(&device_name())?;
-    advertising.lock().set_data(BLEAdvertisementData::new().name(&device_name()).add_service_uuid(uuid(SERVICE_UUID)))?;
+    advertising
+        .lock()
+        .set_data(BLEAdvertisementData::new().name(&device_name()).add_service_uuid(uuid(SERVICE_UUID)))?;
     advertising.lock().start()?;
     if status_tx.send(BleStatus::Advertising).is_err() {
         log::warn!("ble: no receiver for status display (UI thread gone?)");
@@ -835,9 +711,7 @@ pub fn device_name() -> String {
     format!("Corisco-{}", device_id())
 }
 
-/// A fresh random 6-digit (000000..=999999) passkey, via the same
-/// hardware-TRNG source as everything else that needs real randomness on
-/// this device (see `rng.rs`).
+/// Random 6-digit pairing passkey from the hardware RNG.
 fn rng_passkey() -> u32 {
     let mut buf = [0u8; 4];
     unsafe { esp_idf_svc::sys::esp_fill_random(buf.as_mut_ptr().cast(), buf.len()) };

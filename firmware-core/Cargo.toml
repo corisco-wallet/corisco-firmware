@@ -7,10 +7,8 @@ rust-version = "1.77"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-# "hw-sha512" routes mnemonic_to_seed's PBKDF2-HMAC-SHA512 (BIP39, 2048
-# rounds) through ESP-IDF's mbedtls hardware SHA accelerator -- pure
-# software takes ~25s here and trips the watchdog.
 corisco-protocol = { workspace = true }
+# "hw-sha512": software PBKDF2 for BIP39 takes ~25s here and trips the watchdog.
 corisco-crypto-core = { workspace = true, features = ["seed-lock", "hw-sha512", "transfer-crypto"] }
 
 esp-idf-svc = { workspace = true, features = ["critical-section"] }
@@ -30,18 +28,9 @@ esp32-nimble = { workspace = true }
 
 # For the on-device FROST self-test only (see src/selftest.rs).
 frost-secp256k1-tr = { workspace = true }
-# "internals" exposes VerifyingKey::new/to_element etc. (normally
-# pub(crate)), needed to add public keys together when simulating a
-# combined (SE + device) verifying key locally for the self-test.
+# "internals": the self-test adds verifying keys together.
 frost-core = { workspace = true, features = ["internals"] }
 rand_core = { workspace = true, features = ["getrandom"] }
 
-# Slint platform/render glue only -- no UI layout lives in this crate (see
-# README.md). Deliberately NOT slint's own "std" feature -- see this
-# project's board crates for why ("systemfonts" cascades into a `memmap2`
-# dependency that doesn't build on this target's minimal libc).
-# "unsafe-single-threaded" is required without slint's "std" feature.
-# Sound here specifically because exactly one thread ever touches Slint
-# state (each board's main/UI thread); other threads only ever communicate
-# with it over an mpsc channel.
+# Platform glue only; features must match the board crates' (see their Cargo.toml for why).
 slint = { workspace = true, features = ["renderer-software", "libm", "unsafe-single-threaded", "compat-1-2"] }

@@ -30,7 +30,8 @@ fn share() -> ShareWire {
 }
 
 fn requests() -> Vec<(String, Request)> {
-    let sc = |i: u8| StatechainCommitment { identifier: bytes(32, i), hiding: bytes(33, i + 1), binding: bytes(33, i + 2) };
+    let sc =
+        |i: u8| StatechainCommitment { identifier: bytes(32, i), hiding: bytes(33, i + 1), binding: bytes(33, i + 2) };
     let sign = |adaptor, amount, dest: Option<&str>, confirm| Request::Sign {
         commitment_id: 70_000,
         leaf_id: "leaf-1".into(),
@@ -58,7 +59,12 @@ fn requests() -> Vec<(String, Request)> {
     for (name, d) in derivations() {
         v.push((
             format!("SubtractAndSplitSecretWithProofs/{name}"),
-            Request::SubtractAndSplitSecretWithProofs { first: d.clone(), second: KeyDerivationRef::Deposit, threshold: 2, num_shares: 3 },
+            Request::SubtractAndSplitSecretWithProofs {
+                first: d.clone(),
+                second: KeyDerivationRef::Deposit,
+                threshold: 2,
+                num_shares: 3,
+            },
         ));
         v.push((
             format!("SubtractSplitAndEncrypt/{name}"),
@@ -86,7 +92,10 @@ fn responses() -> Vec<(String, Response)> {
         ("Error".into(), Response::Error { message: "unknown commitment_id: 7".into() }),
         ("Shares".into(), Response::Shares { shares: vec![share(), share()] }),
         ("Shares/empty".into(), Response::Shares { shares: vec![] }),
-        ("SubtractSplitAndEncrypt".into(), Response::SubtractSplitAndEncrypt { shares: vec![share()], secret_cipher: bytes(100, 4) }),
+        (
+            "SubtractSplitAndEncrypt".into(),
+            Response::SubtractSplitAndEncrypt { shares: vec![share()], secret_cipher: bytes(100, 4) },
+        ),
     ]
 }
 
@@ -117,7 +126,10 @@ fn every_variant_needs_a_vector(req: &Request, resp: &Response) {
     }
 }
 
-fn entry<T: Serialize + for<'de> serde::Deserialize<'de> + PartialEq + std::fmt::Debug>(name: &str, value: &T) -> Value {
+fn entry<T: Serialize + for<'de> serde::Deserialize<'de> + PartialEq + std::fmt::Debug>(
+    name: &str,
+    value: &T,
+) -> Value {
     let encoded = postcard::to_allocvec(value).unwrap();
     let decoded: T = postcard::from_bytes(&encoded).unwrap();
     assert_eq!(&decoded, value, "{name}: postcard round trip");
