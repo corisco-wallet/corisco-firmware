@@ -30,8 +30,9 @@ npx -y @buildonspark/cli --network regtest \
 To test a real send from the hardware signer: pair `corisco-android-app` with a
 provisioned device (see `esp32-lilygo-t-display-s3-firmware/README.md`), create an invoice
 from the `receiver` wallet below (`createinvoice <amount> <memo> false
-false`), and pay it from the app -- confirming on the device's own screen
-completes the payment.
+false`), and pay it from the app. With blind signing on (the default) the
+device signs straight away; with it off, confirming on the device's own
+screen completes the payment.
 
 ## receiver (unfunded)
 

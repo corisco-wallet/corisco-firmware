@@ -3,7 +3,7 @@
 Firmware for the Corisco hardware signer on the
 [LilyGo T-Display-S3](https://github.com/Xinyuan-LilyGO/T-Display-S3): wallet
 setup, PIN-protected seed storage, Bluetooth signing for the phone app, and
-the on-device screen where you confirm every payment. Shared logic lives in
+the on-device screen where you confirm payments (when blind signing is off). Shared logic lives in
 [`../firmware-core`](../firmware-core).
 
 ## Flash a release

@@ -97,18 +97,19 @@ fn main() -> anyhow::Result<()> {
     let (status_tx, status_rx) = mpsc::channel::<ble::BleStatus>();
     let (pairing_done_tx, pairing_done_rx) = mpsc::channel::<()>();
     // Shared with the BLE thread so the Settings toggle applies to the next `Sign`, no reboot.
-    let require_confirmation = Arc::new(AtomicBool::new(
-        storage_handle.as_ref().and_then(|s| s.get_require_confirmation().ok()).unwrap_or(true),
-    ));
+    // An unset value already reads as `true`; a read error falls back to prompting so it can't
+    // silently override a user who turned blind signing off.
+    let blind_signing =
+        Arc::new(AtomicBool::new(storage_handle.as_ref().and_then(|s| s.get_blind_signing().ok()).unwrap_or(false)));
     // 16KB: the default stack crashes BT controller init (a misleading spinlock assertion), and a
     // bigger one eats into the ~90-100KB a live BLE connection needs from tight internal RAM.
     {
-        let require_confirmation = require_confirmation.clone();
+        let blind_signing = blind_signing.clone();
         std::thread::Builder::new()
             .stack_size(16384)
             .spawn(move || {
                 if let Err(e) =
-                    ble::run(roots, passkey_tx, confirm_tx, work_tx, status_tx, require_confirmation, pairing_done_tx)
+                    ble::run(roots, passkey_tx, confirm_tx, work_tx, status_tx, blind_signing, pairing_done_tx)
                 {
                     log::error!("ble: run failed: {e:?}");
                 }
@@ -173,10 +174,10 @@ fn main() -> anyhow::Result<()> {
 
             {
                 let ui_weak = ui.as_weak();
-                let require_confirmation = require_confirmation.clone();
+                let blind_signing = blind_signing.clone();
                 ui.on_settings_pressed(move || {
                     let Some(ui) = ui_weak.upgrade() else { return };
-                    ui.set_require_confirmation(require_confirmation.load(Ordering::Relaxed));
+                    ui.set_blind_signing(blind_signing.load(Ordering::Relaxed));
                     ui.set_screen(11);
                 });
             }
@@ -188,41 +189,27 @@ fn main() -> anyhow::Result<()> {
                 });
             }
             {
-                // Disabling confirmation asks twice (screen 12); re-enabling is never gated.
+                // Turning blind signing off shows the beta notice (screen 12).
                 let ui_weak = ui.as_weak();
-                let require_confirmation = require_confirmation.clone();
+                let blind_signing = blind_signing.clone();
                 let storage = storage.clone();
-                ui.on_require_confirmation_toggle_pressed(move || {
+                ui.on_blind_signing_toggle_pressed(move || {
                     let Some(ui) = ui_weak.upgrade() else { return };
-                    if require_confirmation.load(Ordering::Relaxed) {
+                    let enabled = !blind_signing.load(Ordering::Relaxed);
+                    blind_signing.store(enabled, Ordering::Relaxed);
+                    if let Err(e) = storage.set_blind_signing(enabled) {
+                        log::error!("main: storage.set_blind_signing failed: {e:?}");
+                    }
+                    ui.set_blind_signing(enabled);
+                    if !enabled {
                         ui.set_screen(12);
-                    } else {
-                        require_confirmation.store(true, Ordering::Relaxed);
-                        if let Err(e) = storage.set_require_confirmation(true) {
-                            log::error!("main: storage.set_require_confirmation failed: {e:?}");
-                        }
-                        ui.set_require_confirmation(true);
                     }
                 });
             }
             {
                 let ui_weak = ui.as_weak();
-                ui.on_disable_confirmation_cancel_pressed(move || {
+                ui.on_confirmation_beta_ok_pressed(move || {
                     let Some(ui) = ui_weak.upgrade() else { return };
-                    ui.set_screen(11);
-                });
-            }
-            {
-                let ui_weak = ui.as_weak();
-                let require_confirmation = require_confirmation.clone();
-                let storage = storage.clone();
-                ui.on_disable_confirmation_confirm_pressed(move || {
-                    let Some(ui) = ui_weak.upgrade() else { return };
-                    require_confirmation.store(false, Ordering::Relaxed);
-                    if let Err(e) = storage.set_require_confirmation(false) {
-                        log::error!("main: storage.set_require_confirmation failed: {e:?}");
-                    }
-                    ui.set_require_confirmation(false);
                     ui.set_screen(11);
                 });
             }
