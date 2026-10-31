@@ -5,8 +5,9 @@
 </p>
 
 The firmware for Corisco, a self-custodial Lightning wallet whose keys live
-on a small ESP32-S3 device instead of your phone. Every payment is
-confirmed on the device's own screen, and the keys never leave it.
+on a small ESP32-S3 device instead of your phone. The keys never leave it,
+and with blind signing turned off (Settings; on by default while this is in
+beta) every payment is confirmed on the device's own screen.
 
 Built on [Spark](https://www.spark.money/)'s FROST-based threshold
 signing protocol.

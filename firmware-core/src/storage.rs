@@ -7,6 +7,7 @@ use esp_idf_svc::sys::EspError;
 const NAMESPACE: &str = "signer";
 const KEY_SEED_BLOB: &str = "seed_blob";
 const KEY_FAIL_COUNT: &str = "fail_count";
+// Stores "require confirmation" (the inverse of blind signing) so choices made before the rename carry over.
 const KEY_REQUIRE_CONFIRMATION: &str = "req_confirm";
 
 /// The encrypted seed is wiped after this many consecutive wrong PINs.
@@ -78,18 +79,18 @@ impl Storage {
         Ok(())
     }
 
-    /// Whether `Sign` requires on-screen confirmation; `true` (the safe default) when never set.
-    pub fn get_require_confirmation(&self) -> Result<bool, EspError> {
-        Ok(self.nvs.get_u8(KEY_REQUIRE_CONFIRMATION)?.map(|v| v != 0).unwrap_or(true))
+    /// Whether `Sign` skips the on-screen prompt; `true` when never set, while confirmation is in beta.
+    pub fn get_blind_signing(&self) -> Result<bool, EspError> {
+        Ok(self.nvs.get_u8(KEY_REQUIRE_CONFIRMATION)?.map(|v| v == 0).unwrap_or(true))
     }
 
-    pub fn set_require_confirmation(&self, enabled: bool) -> Result<(), EspError> {
-        self.nvs.set_u8(KEY_REQUIRE_CONFIRMATION, enabled as u8)?;
+    pub fn set_blind_signing(&self, enabled: bool) -> Result<(), EspError> {
+        self.nvs.set_u8(KEY_REQUIRE_CONFIRMATION, !enabled as u8)?;
         Ok(())
     }
 
-    /// Erases seed, attempt counter and settings, so a re-onboarded device starts from safe
-    /// defaults instead of a previous owner's relaxed ones.
+    /// Erases seed, attempt counter and settings, so a re-onboarded device starts from defaults
+    /// instead of a previous owner's choices.
     pub fn wipe(&self) -> Result<(), EspError> {
         self.nvs.remove(KEY_SEED_BLOB)?;
         self.nvs.remove(KEY_FAIL_COUNT)?;

@@ -166,7 +166,7 @@ export component AppWindow inherits Window {
 
     // 0=Welcome 1=Mnemonic 2=Pin 3=Home 4=SignConfirm 5=Wiped 6=Working
     // 7=Pairing 8=WordCount 9=WordEntry 10=FactoryResetConfirm 11=Settings
-    // 12=DisableConfirmationConfirm
+    // 12=EnableBlindSigningConfirm
     in-out property <int> screen: 0;
 
     // SecurityIOCap::DisplayOnly: the passkey must be shown here (ble.rs's on_passkey_request).
@@ -200,9 +200,9 @@ export component AppWindow inherits Window {
 
     in property <string> wiped-reason: "";
 
-    // Mirrors `ble.rs`'s `Signer.require_confirmation`. Turning it off is a
+    // Mirrors `ble.rs`'s `Signer.blind_signing`. Turning it on is a
     // security-posture change, hence the separate confirm screen (12).
-    in property <bool> require-confirmation: true;
+    in property <bool> blind-signing: true;
 
     in property <string> word-entry-progress: "";
     in property <string> word-entry-prefix: "";
@@ -229,9 +229,9 @@ export component AppWindow inherits Window {
     callback factory-reset-cancel-pressed();
     callback settings-pressed();
     callback settings-back-pressed();
-    callback require-confirmation-toggle-pressed();
-    callback disable-confirmation-confirm-pressed();
-    callback disable-confirmation-cancel-pressed();
+    callback blind-signing-toggle-pressed();
+    callback enable-blind-signing-confirm-pressed();
+    callback enable-blind-signing-cancel-pressed();
 
     if root.screen == 0: HorizontalLayout {
         VerticalLayout {
@@ -668,19 +668,21 @@ export component AppWindow inherits Window {
             background: toggle-ta.pressed ? Theme.pressed : Theme.surface;
             border-width: 1px;
             border-color: Theme.border;
-            toggle-ta := TouchArea { clicked => { root.require-confirmation-toggle-pressed(); } }
+            toggle-ta := TouchArea { clicked => { root.blind-signing-toggle-pressed(); } }
             Text {
-                text: "Require confirmation: " + (root.require-confirmation ? "ON" : "OFF");
-                color: root.require-confirmation ? Theme.success : Theme.error;
+                text: "Blind signing: " + (root.blind-signing ? "ON" : "OFF");
+                color: root.blind-signing ? Theme.error : Theme.success;
                 font-size: 16px;
                 font-weight: 700;
                 horizontal-alignment: center;
                 vertical-alignment: center;
             }
         }
-        if !root.require-confirmation: Text {
-            text: "Transactions will be signed automatically, with no prompt on this device.";
-            color: Theme.error;
+        Text {
+            text: root.blind-signing
+                ? "Transactions are signed automatically, with no prompt on this device."
+                : "Beta: you confirm every transaction on this device.";
+            color: root.blind-signing ? Theme.error : Theme.text-secondary;
             font-size: 12px;
             horizontal-alignment: center;
             vertical-alignment: center;
@@ -693,7 +695,7 @@ export component AppWindow inherits Window {
         }
     }
 
-    // Turning confirmation back ON (main.rs) needs no such gate.
+    // Turning blind signing back OFF (main.rs) needs no such gate.
     if root.screen == 12: VerticalLayout {
         VerticalLayout {
             alignment: center;
@@ -704,7 +706,7 @@ export component AppWindow inherits Window {
                 spacing: 8px;
                 Icon { source: @image-url("./icons/warning.svg"); color: Theme.error; size: 22px; }
                 Text {
-                    text: "Disable confirmation?";
+                    text: "Enable blind signing?";
                     color: Theme.error;
                     font-size: 20px;
                     font-weight: 700;
@@ -721,12 +723,12 @@ export component AppWindow inherits Window {
         }
         HorizontalLayout {
             DangerButton {
-                text: "Disable";
-                clicked => { root.disable-confirmation-confirm-pressed(); }
+                text: "Enable";
+                clicked => { root.enable-blind-signing-confirm-pressed(); }
             }
             OutlineButton {
                 text: "Cancel";
-                clicked => { root.disable-confirmation-cancel-pressed(); }
+                clicked => { root.enable-blind-signing-cancel-pressed(); }
             }
         }
     }

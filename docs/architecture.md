@@ -74,8 +74,10 @@ The device, not the app, has the final say on whether `Sign` prompts:
 - The app marks real spends with `requires_confirmation: true`. It can't
   use `false` to skip a prompt on its own: the device also checks that it
   saw the leaf being claimed, and prompts otherwise.
-- The on-device Settings toggle overrides both. It defaults to on and is
-  stored in NVS.
+- On-device blind signing mode (Settings) overrides both: when on, every
+  `Sign` is signed without a prompt. It defaults to **on** while
+  confirmation prompts are in beta, and is stored in NVS. Turn it off to
+  confirm every transaction on the device.
 
 On accept the device runs the FROST signing and returns the share. On
 decline it returns an error and signs nothing.
@@ -84,7 +86,7 @@ decline it returns an error and signs nothing.
 
 | Request | Confirmation |
 |---|---|
-| `Sign` | Prompts unless the leaf was claimed on this device and the app sent `false` (or the Settings toggle is off) |
+| `Sign` | Prompts unless the leaf was claimed on this device and the app sent `false` (and never when blind signing is on, the default) |
 | `Commit`, `GetLeafPublicKey`, `GetIdentityPublicKey`, `GetDepositPublicKey` | None (no fund-moving signature) |
 | `SignSchnorrIdentity`, `SignEcdsaIdentity` | None (auth signatures, not a leaf spend) |
 | `SubtractAndSplitSecretWithProofs`, `SubtractSplitAndEncrypt`, `DecryptEciesToPublicKey` | None (key plumbing; the `Sign` that follows is gated) |

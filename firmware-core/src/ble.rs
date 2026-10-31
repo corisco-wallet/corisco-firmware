@@ -135,10 +135,10 @@ fn handle_request(signer: &Arc<Signer>, responder: ResponseChannel, req: Request
                 responder,
             });
             // Default deny: only a leaf this device saw being claimed may skip the prompt, and the
-            // phone's flag can only add one. The on-device Settings toggle overrides both.
+            // phone's flag can only add one. On-device blind signing mode overrides both.
             let claim_authorized = signer.claimed_leaves.lock().unwrap().is_authorized(&confirm_req.leaf_id);
             let needs_prompt = requires_confirmation || !claim_authorized;
-            if needs_prompt && signer.require_confirmation.load(Ordering::Relaxed) {
+            if needs_prompt && !signer.blind_signing.load(Ordering::Relaxed) {
                 if signer.confirm_tx.send(confirm_req).is_err() {
                     return Some(err("no confirmation receiver (UI thread gone?)"));
                 }
@@ -199,8 +199,8 @@ struct Signer {
     claimed_leaves: Mutex<AuthorizedLeaves>,
     confirm_tx: mpsc::Sender<Box<SignConfirmationRequest>>,
     work_tx: mpsc::Sender<DeferredRequest>,
-    /// The on-device Settings toggle; `false` auto-signs every `Sign` regardless of the app's flag.
-    require_confirmation: Arc<AtomicBool>,
+    /// The on-device blind signing setting; `true` auto-signs every `Sign` regardless of the app's flag.
+    blind_signing: Arc<AtomicBool>,
 }
 
 /// Set while an indication is unconfirmed; `on_notify_tx` clears it so the next frame can go.
@@ -577,7 +577,7 @@ pub fn run(
     confirm_tx: mpsc::Sender<Box<SignConfirmationRequest>>,
     work_tx: mpsc::Sender<DeferredRequest>,
     status_tx: mpsc::Sender<BleStatus>,
-    require_confirmation: Arc<AtomicBool>,
+    blind_signing: Arc<AtomicBool>,
     pairing_done_tx: mpsc::Sender<()>,
 ) -> anyhow::Result<()> {
     let device = BLEDevice::take();
@@ -593,7 +593,7 @@ pub fn run(
         claimed_leaves: Mutex::new(AuthorizedLeaves::default()),
         confirm_tx,
         work_tx,
-        require_confirmation,
+        blind_signing,
     });
 
     let server = device.get_server();
