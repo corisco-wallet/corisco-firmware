@@ -19,6 +19,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Other
 
+- release ([#17](https://github.com/corisco-wallet/corisco-firmware/pull/17))
+- apply minimal-comment policy, add rustfmt config, fix warnings ([#20](https://github.com/corisco-wallet/corisco-firmware/pull/20))
+- describe default-deny confirmation and simplify architecture ([#18](https://github.com/corisco-wallet/corisco-firmware/pull/18))
+
+## [0.1.2](https://github.com/corisco-wallet/corisco-firmware/compare/v0.1.1...v0.1.2) - 2026-10-31
+
+### Added
+
+- *(firmware)* rename confirmation setting to blind signing, default on ([#22](https://github.com/corisco-wallet/corisco-firmware/pull/22))
+
+### Fixed
+
+- *(firmware)* stop logging touch positions and pairing passkey to serial ([#19](https://github.com/corisco-wallet/corisco-firmware/pull/19))
+
+### Other
+
+- release ([#17](https://github.com/corisco-wallet/corisco-firmware/pull/17))
+- apply minimal-comment policy, add rustfmt config, fix warnings ([#20](https://github.com/corisco-wallet/corisco-firmware/pull/20))
+
+## [0.1.2](https://github.com/corisco-wallet/corisco-firmware/compare/v0.1.1...v0.1.2) - 2026-10-31
+
+### Other
+
+- release ([#17](https://github.com/corisco-wallet/corisco-firmware/pull/17))
+- apply minimal-comment policy, add rustfmt config, fix warnings ([#20](https://github.com/corisco-wallet/corisco-firmware/pull/20))
+- describe default-deny confirmation and simplify architecture ([#18](https://github.com/corisco-wallet/corisco-firmware/pull/18))
+
+## [0.1.3](https://github.com/corisco-wallet/corisco-firmware/compare/v0.1.2...v0.1.3) - 2026-10-31
+
+### Added
+
+- *(firmware)* rename confirmation setting to blind signing, default on ([#22](https://github.com/corisco-wallet/corisco-firmware/pull/22))
+
+### Fixed
+
+- *(firmware)* stop logging touch positions and pairing passkey to serial ([#19](https://github.com/corisco-wallet/corisco-firmware/pull/19))
+
+### Other
+
 - apply minimal-comment policy, add rustfmt config, fix warnings ([#20](https://github.com/corisco-wallet/corisco-firmware/pull/20))
 - describe default-deny confirmation and simplify architecture ([#18](https://github.com/corisco-wallet/corisco-firmware/pull/18))
 
