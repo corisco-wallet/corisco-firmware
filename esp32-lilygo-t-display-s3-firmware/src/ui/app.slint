@@ -24,6 +24,7 @@ global Theme {
     out property <color> error-pressed: #c85252;
     out property <color> error-text: #1a0505;
     out property <color> success: #4ade80;
+    out property <color> warning: #facc15;
     out property <color> pressed: #2a2a33;
 
     out property <length> button-height: 48px;
@@ -166,7 +167,7 @@ export component AppWindow inherits Window {
 
     // 0=Welcome 1=Mnemonic 2=Pin 3=Home 4=SignConfirm 5=Wiped 6=Working
     // 7=Pairing 8=WordCount 9=WordEntry 10=FactoryResetConfirm 11=Settings
-    // 12=EnableBlindSigningConfirm
+    // 12=ConfirmationBetaNotice
     in-out property <int> screen: 0;
 
     // SecurityIOCap::DisplayOnly: the passkey must be shown here (ble.rs's on_passkey_request).
@@ -200,8 +201,7 @@ export component AppWindow inherits Window {
 
     in property <string> wiped-reason: "";
 
-    // Mirrors `ble.rs`'s `Signer.blind_signing`. Turning it on is a
-    // security-posture change, hence the separate confirm screen (12).
+    // Mirrors `ble.rs`'s `Signer.blind_signing`.
     in property <bool> blind-signing: true;
 
     in property <string> word-entry-progress: "";
@@ -230,8 +230,7 @@ export component AppWindow inherits Window {
     callback settings-pressed();
     callback settings-back-pressed();
     callback blind-signing-toggle-pressed();
-    callback enable-blind-signing-confirm-pressed();
-    callback enable-blind-signing-cancel-pressed();
+    callback confirmation-beta-ok-pressed();
 
     if root.screen == 0: HorizontalLayout {
         VerticalLayout {
@@ -671,18 +670,16 @@ export component AppWindow inherits Window {
             toggle-ta := TouchArea { clicked => { root.blind-signing-toggle-pressed(); } }
             Text {
                 text: "Blind signing: " + (root.blind-signing ? "ON" : "OFF");
-                color: root.blind-signing ? Theme.error : Theme.success;
+                color: root.blind-signing ? Theme.success : Theme.warning;
                 font-size: 16px;
                 font-weight: 700;
                 horizontal-alignment: center;
                 vertical-alignment: center;
             }
         }
-        Text {
-            text: root.blind-signing
-                ? "Transactions are signed automatically, with no prompt on this device."
-                : "Beta: you confirm every transaction on this device.";
-            color: root.blind-signing ? Theme.error : Theme.text-secondary;
+        if !root.blind-signing: Text {
+            text: "Beta: you confirm every transaction on this device.";
+            color: Theme.warning;
             font-size: 12px;
             horizontal-alignment: center;
             vertical-alignment: center;
@@ -695,7 +692,6 @@ export component AppWindow inherits Window {
         }
     }
 
-    // Turning blind signing back OFF (main.rs) needs no such gate.
     if root.screen == 12: VerticalLayout {
         VerticalLayout {
             alignment: center;
@@ -704,32 +700,26 @@ export component AppWindow inherits Window {
             HorizontalLayout {
                 alignment: center;
                 spacing: 8px;
-                Icon { source: @image-url("./icons/warning.svg"); color: Theme.error; size: 22px; }
+                Icon { source: @image-url("./icons/warning.svg"); color: Theme.warning; size: 22px; }
                 Text {
-                    text: "Enable blind signing?";
-                    color: Theme.error;
+                    text: "Beta feature";
+                    color: Theme.warning;
                     font-size: 20px;
                     font-weight: 700;
                     vertical-alignment: center;
                 }
             }
             Text {
-                text: "The device will sign transactions automatically, without asking you to approve them here.";
+                text: "Confirming transactions on this device is still in beta, being tested and improved.";
                 color: Theme.text-secondary;
                 font-size: 14px;
                 horizontal-alignment: center;
                 wrap: word-wrap;
             }
         }
-        HorizontalLayout {
-            DangerButton {
-                text: "Enable";
-                clicked => { root.enable-blind-signing-confirm-pressed(); }
-            }
-            OutlineButton {
-                text: "Cancel";
-                clicked => { root.enable-blind-signing-cancel-pressed(); }
-            }
+        PrimaryButton {
+            text: "OK";
+            clicked => { root.confirmation-beta-ok-pressed(); }
         }
     }
 }

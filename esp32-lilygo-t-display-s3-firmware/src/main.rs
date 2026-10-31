@@ -189,41 +189,27 @@ fn main() -> anyhow::Result<()> {
                 });
             }
             {
-                // Turning blind signing on asks twice (screen 12); turning it off is never gated.
+                // Turning blind signing off shows the beta notice (screen 12).
                 let ui_weak = ui.as_weak();
                 let blind_signing = blind_signing.clone();
                 let storage = storage.clone();
                 ui.on_blind_signing_toggle_pressed(move || {
                     let Some(ui) = ui_weak.upgrade() else { return };
-                    if !blind_signing.load(Ordering::Relaxed) {
-                        ui.set_screen(12);
-                    } else {
-                        blind_signing.store(false, Ordering::Relaxed);
-                        if let Err(e) = storage.set_blind_signing(false) {
-                            log::error!("main: storage.set_blind_signing failed: {e:?}");
-                        }
-                        ui.set_blind_signing(false);
-                    }
-                });
-            }
-            {
-                let ui_weak = ui.as_weak();
-                ui.on_enable_blind_signing_cancel_pressed(move || {
-                    let Some(ui) = ui_weak.upgrade() else { return };
-                    ui.set_screen(11);
-                });
-            }
-            {
-                let ui_weak = ui.as_weak();
-                let blind_signing = blind_signing.clone();
-                let storage = storage.clone();
-                ui.on_enable_blind_signing_confirm_pressed(move || {
-                    let Some(ui) = ui_weak.upgrade() else { return };
-                    blind_signing.store(true, Ordering::Relaxed);
-                    if let Err(e) = storage.set_blind_signing(true) {
+                    let enabled = !blind_signing.load(Ordering::Relaxed);
+                    blind_signing.store(enabled, Ordering::Relaxed);
+                    if let Err(e) = storage.set_blind_signing(enabled) {
                         log::error!("main: storage.set_blind_signing failed: {e:?}");
                     }
-                    ui.set_blind_signing(true);
+                    ui.set_blind_signing(enabled);
+                    if !enabled {
+                        ui.set_screen(12);
+                    }
+                });
+            }
+            {
+                let ui_weak = ui.as_weak();
+                ui.on_confirmation_beta_ok_pressed(move || {
+                    let Some(ui) = ui_weak.upgrade() else { return };
                     ui.set_screen(11);
                 });
             }
