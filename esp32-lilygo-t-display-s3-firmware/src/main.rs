@@ -230,6 +230,8 @@ fn main() -> anyhow::Result<()> {
 
             ui.set_battery_visible(battery.is_some());
             update_battery(&ui, battery.as_mut());
+            // Only now is the loop about to poll touch; until here the Loading screen was up.
+            ui.set_screen(3);
             let mut last_position = None;
             loop {
                 update_battery(&ui, battery.as_mut());

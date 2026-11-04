@@ -151,7 +151,9 @@ fn sync_ui(ui: &AppWindow, flow: &FlowInner) {
                 Err(_) => String::new(),
             };
             ui.set_identity_pubkey_short(pubkey_short.into());
-            ui.set_screen(3);
+            // main.rs switches to Home once its setup is done and the loop is polling touch.
+            ui.set_working_label("Loading...".into());
+            ui.set_screen(6);
         }
         Stage::Wiped => ui.set_screen(5),
         Stage::PendingGenerateMnemonic { .. } => {
@@ -467,7 +469,7 @@ pub fn run_onboarding_or_unlock(
         slint::platform::update_timers_and_animations();
         platform::render_frame(window, display);
 
-        // After the render, so the Home screen set last iteration is drawn before returning.
+        // After the render, so the Loading screen set last iteration is drawn before returning.
         if let Stage::Done(seed) = &flow.borrow().stage {
             return Ok((ui, *seed));
         }
