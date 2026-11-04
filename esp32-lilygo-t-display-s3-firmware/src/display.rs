@@ -15,8 +15,8 @@ pub const HEIGHT: u16 = 170;
 // The DMA buffer covers this many rows: a full-frame buffer fails to allocate this early in boot.
 const ROWS_PER_CHUNK: u16 = 20;
 
-const PIN_POWER_ON: gpio_num_t = 15;
-const PIN_LCD_BL: gpio_num_t = 38;
+pub const PIN_POWER_ON: gpio_num_t = 15;
+pub const PIN_LCD_BL: gpio_num_t = 38;
 const PIN_LCD_RES: gpio_num_t = 5;
 const PIN_LCD_CS: gpio_num_t = 6;
 const PIN_LCD_DC: gpio_num_t = 7;
@@ -164,6 +164,16 @@ impl Display {
             ))?;
         }
         self.trans_done.wait_any();
+        Ok(())
+    }
+
+    /// Blanks the panel and puts the ST7789 into sleep mode before its rail is cut.
+    pub fn sleep(&self) -> anyhow::Result<()> {
+        unsafe {
+            gpio_set_level(PIN_LCD_BL, 0);
+            esp!(esp_lcd_panel_disp_on_off(self.panel, false))?;
+            esp!(esp_lcd_panel_disp_sleep(self.panel, true))?;
+        }
         Ok(())
     }
 }
