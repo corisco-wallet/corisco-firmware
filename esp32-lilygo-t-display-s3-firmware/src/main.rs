@@ -1,6 +1,7 @@
 //! LilyGo T-Display-S3 firmware: unlocks the seed through the on-screen flow, then serves BLE
 //! signing requests gated by on-device confirmation.
 
+mod battery;
 mod display;
 mod power;
 mod touch;
@@ -28,6 +29,10 @@ fn main() -> anyhow::Result<()> {
     power::on_boot(&power_button);
 
     info!("esp32-lilygo-t-display-s3-firmware: boot ok, bringing up the display...");
+
+    let mut battery = battery::Battery::new(peripherals.adc1, peripherals.pins.gpio4)
+        .inspect_err(|e| log::error!("battery: ADC init failed, hiding indicator: {e:?}"))
+        .ok();
 
     let display = match display::Display::new() {
         Ok(disp) => Some(disp),
@@ -223,8 +228,12 @@ fn main() -> anyhow::Result<()> {
                 });
             }
 
+            ui.set_battery_visible(battery.is_some());
+            update_battery(&ui, battery.as_mut());
             let mut last_position = None;
             loop {
+                update_battery(&ui, battery.as_mut());
+
                 platform::dispatch_touch(&window, touch, &mut last_position);
                 slint::platform::update_timers_and_animations();
                 platform::render_frame(&window, display);
@@ -278,6 +287,13 @@ fn main() -> anyhow::Result<()> {
             }
         }
         _ => halt(&mut power_button),
+    }
+}
+
+fn update_battery(ui: &AppWindow, battery: Option<&mut battery::Battery>) {
+    if let Some(status) = battery.and_then(|b| b.poll()) {
+        ui.set_battery_percent(status.percent.into());
+        ui.set_battery_charging(status.charging);
     }
 }
 
