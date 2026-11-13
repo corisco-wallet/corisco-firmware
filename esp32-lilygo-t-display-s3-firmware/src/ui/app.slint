@@ -111,6 +111,7 @@ component Logo {
 component BatteryIndicator inherits HorizontalLayout {
     in property <int> percent;
     in property <bool> charging;
+    property <int> stage-fill: root.percent <= 10 ? 10 : root.percent <= 25 ? 25 : root.percent <= 50 ? 50 : root.percent <= 75 ? 75 : 100;
     spacing: 4px;
     if root.charging: Icon {
         source: @image-url("./icons/zap.svg");
@@ -130,10 +131,10 @@ component BatteryIndicator inherits HorizontalLayout {
             Rectangle {
                 x: 2.5px;
                 y: 2.5px;
-                width: (parent.width - 5px) * clamp(root.percent, 0, 100) / 100;
+                width: (parent.width - 5px) * root.stage-fill / 100;
                 height: parent.height - 5px;
                 border-radius: 1px;
-                background: root.charging ? Theme.success : root.percent <= 15 ? Theme.error : Theme.text-primary;
+                background: root.charging ? Theme.success : root.stage-fill == 10 ? Theme.error : root.stage-fill == 25 ? Theme.warning : Theme.text-primary;
             }
         }
         Rectangle {
