@@ -15,8 +15,8 @@ pub const HEIGHT: u16 = 170;
 // The DMA buffer covers this many rows: a full-frame buffer fails to allocate this early in boot.
 const ROWS_PER_CHUNK: u16 = 20;
 
-const PIN_POWER_ON: gpio_num_t = 15;
-const PIN_LCD_BL: gpio_num_t = 38;
+pub const PIN_POWER_ON: gpio_num_t = 15;
+pub const PIN_LCD_BL: gpio_num_t = 38;
 const PIN_LCD_RES: gpio_num_t = 5;
 const PIN_LCD_CS: gpio_num_t = 6;
 const PIN_LCD_DC: gpio_num_t = 7;
@@ -129,7 +129,6 @@ impl Display {
             esp!(esp_lcd_panel_set_gap(panel, X_GAP, Y_GAP))?;
             // This ST7789 module renders inverted colors otherwise.
             esp!(esp_lcd_panel_invert_color(panel, true))?;
-            esp!(esp_lcd_panel_disp_on_off(panel, true))?;
 
             let dma_buf_len = WIDTH as usize * ROWS_PER_CHUNK as usize;
             // Internal RAM only: MALLOC_CAP_DMA alone may land in PSRAM, which isn't DMA-coherent.
@@ -137,10 +136,23 @@ impl Display {
                 esp_lcd_i80_alloc_draw_buffer(io, dma_buf_len * 2, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL) as *mut u16;
             anyhow::ensure!(!dma_buf.is_null(), "esp_lcd_i80_alloc_draw_buffer failed (out of DMA-capable memory)");
 
+            let display = Self { panel, io, bus, trans_done, dma_buf, dma_buf_len };
+            // GRAM survives sleep and resets, so the last frame from before power-off would flash.
+            display.clear()?;
+            esp!(esp_lcd_panel_disp_on_off(panel, true))?;
             gpio_set_level(PIN_LCD_BL, 1);
 
-            Ok(Self { panel, io, bus, trans_done, dma_buf, dma_buf_len })
+            Ok(display)
         }
+    }
+
+    fn clear(&self) -> anyhow::Result<()> {
+        let black = vec![0u16; self.dma_buf_len];
+        for y in (0..HEIGHT).step_by(ROWS_PER_CHUNK as usize) {
+            let y1 = (y + ROWS_PER_CHUNK).min(HEIGHT);
+            self.draw_bitmap(0, y, WIDTH, y1, &black[..WIDTH as usize * (y1 - y) as usize])?;
+        }
+        Ok(())
     }
 
     /// Draws RGB565 `pixels` into `[x0, x1) x [y0, y1)`, blocking until DMA has read them.
@@ -164,6 +176,16 @@ impl Display {
             ))?;
         }
         self.trans_done.wait_any();
+        Ok(())
+    }
+
+    /// Blanks the panel and puts the ST7789 into sleep mode before its rail is cut.
+    pub fn sleep(&self) -> anyhow::Result<()> {
+        unsafe {
+            gpio_set_level(PIN_LCD_BL, 0);
+            esp!(esp_lcd_panel_disp_on_off(self.panel, false))?;
+            esp!(esp_lcd_panel_disp_sleep(self.panel, true))?;
+        }
         Ok(())
     }
 }

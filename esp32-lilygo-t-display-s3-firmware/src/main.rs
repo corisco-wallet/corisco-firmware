@@ -1,7 +1,9 @@
 //! LilyGo T-Display-S3 firmware: unlocks the seed through the on-screen flow, then serves BLE
 //! signing requests gated by on-device confirmation.
 
+mod battery;
 mod display;
+mod power;
 mod touch;
 mod ui;
 
@@ -23,7 +25,14 @@ fn main() -> anyhow::Result<()> {
     let peripherals = Peripherals::take()?;
     let nvs = esp_idf_svc::nvs::EspDefaultNvsPartition::take()?;
 
+    let mut power_button = power::PowerButton::new(peripherals.pins.gpio14)?;
+    power::on_boot(&power_button);
+
     info!("esp32-lilygo-t-display-s3-firmware: boot ok, bringing up the display...");
+
+    let mut battery = battery::Battery::new(peripherals.adc1, peripherals.pins.gpio4)
+        .inspect_err(|e| log::error!("battery: ADC init failed, hiding indicator: {e:?}"))
+        .ok();
 
     let display = match display::Display::new() {
         Ok(disp) => Some(disp),
@@ -54,7 +63,14 @@ fn main() -> anyhow::Result<()> {
         let storage = std::rc::Rc::new(storage::Storage::init(nvs.clone()).expect("NVS storage should initialize"));
         let already_provisioned = storage.is_provisioned().unwrap_or(false);
         info!("ui: starting {} flow", if already_provisioned { "unlock" } else { "onboarding" });
-        let result = match ui::run_onboarding_or_unlock(&w, display, touch, storage.clone(), already_provisioned) {
+        let result = match ui::run_onboarding_or_unlock(
+            &w,
+            display,
+            touch,
+            &mut power_button,
+            storage.clone(),
+            already_provisioned,
+        ) {
             Ok((ui, seed)) => {
                 let roots = corisco_crypto_core::SparkKeyRoots::from_seed(&seed, 0)
                     .expect("key derivation should not fail for this seed");
@@ -77,9 +93,7 @@ fn main() -> anyhow::Result<()> {
     // Never sign without a real onboarded seed: halt rather than fall back to any key.
     let Some(roots) = onboarded_roots else {
         log::error!("no onboarded seed available (display/touch unavailable, or the onboarding/unlock flow failed) -- halting rather than signing with a fake key");
-        loop {
-            esp_idf_svc::hal::delay::FreeRtos::delay_ms(1000);
-        }
+        halt(&mut power_button);
     };
 
     selftest::bench_sha512_single_block();
@@ -214,8 +228,14 @@ fn main() -> anyhow::Result<()> {
                 });
             }
 
+            ui.set_battery_visible(battery.is_some());
+            update_battery(&ui, battery.as_mut());
+            // Only now is the loop about to poll touch; until here the Loading screen was up.
+            ui.set_screen(3);
             let mut last_position = None;
             loop {
+                update_battery(&ui, battery.as_mut());
+
                 platform::dispatch_touch(&window, touch, &mut last_position);
                 slint::platform::update_timers_and_animations();
                 platform::render_frame(&window, display);
@@ -226,6 +246,14 @@ fn main() -> anyhow::Result<()> {
                         log::error!("main: storage.wipe failed during factory reset: {e:?}");
                     }
                     esp_idf_hal::reset::restart();
+                }
+
+                if power_button.long_pressed() {
+                    // Answer a pending confirmation so the app gets a clean decline, not a timeout.
+                    if let Some(req) = pending_sign.borrow_mut().take() {
+                        ble::complete_sign(req, false);
+                    }
+                    power::power_off(&ui, &window, display, &power_button);
                 }
 
                 if let Ok(ble::PasskeyDisplay { passkey }) = passkey_rx.try_recv() {
@@ -260,9 +288,24 @@ fn main() -> anyhow::Result<()> {
                 esp_idf_svc::hal::delay::FreeRtos::delay_ms(20);
             }
         }
-        _ => loop {
-            esp_idf_svc::hal::delay::FreeRtos::delay_ms(1000);
-        },
+        _ => halt(&mut power_button),
+    }
+}
+
+fn update_battery(ui: &AppWindow, battery: Option<&mut battery::Battery>) {
+    if let Some(status) = battery.and_then(|b| b.poll()) {
+        ui.set_battery_percent(status.percent.into());
+        ui.set_battery_charging(status.charging);
+    }
+}
+
+/// Idles without a usable UI; the power button still turns the device off.
+fn halt(power_button: &mut power::PowerButton) -> ! {
+    loop {
+        if power_button.long_pressed() {
+            power::deep_sleep(power_button);
+        }
+        esp_idf_svc::hal::delay::FreeRtos::delay_ms(20);
     }
 }
 
