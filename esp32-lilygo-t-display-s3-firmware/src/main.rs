@@ -6,6 +6,7 @@ mod display;
 mod power;
 mod touch;
 mod ui;
+mod worker;
 
 use firmware_core::{ble, platform, selftest, storage};
 
@@ -17,6 +18,10 @@ use esp_idf_svc::log::EspLogger;
 use log::info;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
+
+/// ~2.4x the measured peak (~20KB) of key derivation + FROST self-test, and small enough to fit
+/// the ~76KB largest internal block left at this point (128KB never did).
+const BOOT_WORKER_STACK: usize = 48 * 1024;
 
 fn main() -> anyhow::Result<()> {
     esp_idf_svc::sys::link_patches();
@@ -72,8 +77,13 @@ fn main() -> anyhow::Result<()> {
             already_provisioned,
         ) {
             Ok((ui, seed)) => {
-                let roots = corisco_crypto_core::SparkKeyRoots::from_seed(&seed, 0)
-                    .expect("key derivation should not fail for this seed");
+                let roots = ui::run_with_spinner(&ui, &w, display, &mut power_button, BOOT_WORKER_STACK, move || {
+                    let roots = corisco_crypto_core::SparkKeyRoots::from_seed(&seed, 0)
+                        .expect("key derivation should not fail for this seed");
+                    selftest::bench_sha512_single_block();
+                    selftest::frost_self_test(&roots).expect("FROST self-test should produce a valid signature");
+                    roots
+                });
                 info!("ui: flow complete, identity pubkey: {}", hex::encode(roots.identity.public_key_compressed()));
                 app_ui = Some(ui);
                 Some(roots)
@@ -95,10 +105,6 @@ fn main() -> anyhow::Result<()> {
         log::error!("no onboarded seed available (display/touch unavailable, or the onboarding/unlock flow failed) -- halting rather than signing with a fake key");
         halt(&mut power_button);
     };
-
-    selftest::bench_sha512_single_block();
-
-    selftest::frost_self_test(&roots).expect("FROST self-test should produce a valid signature");
 
     info!(
         "heap before BLE spawn: free={} largest_free_block={}",
@@ -181,7 +187,7 @@ fn main() -> anyhow::Result<()> {
                 ui.on_factory_reset_confirm_pressed(move || {
                     let Some(ui) = ui_weak.upgrade() else { return };
                     factory_reset_pending.set(true);
-                    ui.set_working_label("Wiping...".into());
+                    ui.set_working_label("Wiping".into());
                     ui.set_screen(6);
                 });
             }
