@@ -237,7 +237,7 @@ export component AppWindow inherits Window {
     in property <string> pairing-passkey: "";
 
     // Shown for at least one real frame before slow crypto calls, which block the render loop.
-    in property <string> working-label: "Working...";
+    in property <string> working-label: "Working";
 
     // Paginated at 12 words/page rather than scrollable: a missed word here is
     // a much worse failure than on any other screen.

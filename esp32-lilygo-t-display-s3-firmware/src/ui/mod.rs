@@ -9,6 +9,7 @@ use crate::power::{self, PowerButton};
 use crate::touch::Touch;
 use crate::worker;
 use crate::AppWindow;
+use bip39::Mnemonic;
 use corisco_crypto_core::seed_lock::{EncryptedSeed, SeedLockError};
 use corisco_crypto_core::{mnemonic_gen, seed_lock};
 use firmware_core::storage::{Storage, MAX_PIN_ATTEMPTS};
@@ -17,7 +18,6 @@ use slint::platform::software_renderer::MinimalSoftwareWindow;
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::thread::JoinHandle;
 use std::time::Instant;
 
 const PIN_LENGTH: usize = 6;
@@ -72,8 +72,6 @@ enum Stage {
     PendingValidateRecovery {
         words: Vec<String>,
     },
-    /// A `Pending*` stage whose crypto is running on the worker; the Working screen stays up.
-    Working,
 }
 
 struct FlowInner {
@@ -179,7 +177,42 @@ fn sync_ui(ui: &AppWindow, flow: &FlowInner) {
             ui.set_working_label("Verifying recovery phrase".into());
             ui.set_screen(6);
         }
-        Stage::Working => {}
+    }
+}
+
+/// Slow crypto for a `Stage::Pending*`, with its inputs; run on the crypto worker.
+enum PendingWork {
+    GenerateMnemonic(Mnemonic),
+    Encrypt { seed: [u8; 64], pin: String, salt: [u8; 16], nonce: [u8; 12] },
+    Decrypt { enc: EncryptedSeed, pin: String },
+    ValidateRecovery(Mnemonic),
+}
+
+impl PendingWork {
+    fn run(self) -> WorkOutput {
+        let t0 = Instant::now();
+        let output = match self {
+            PendingWork::GenerateMnemonic(mnemonic) => {
+                let seed = corisco_crypto_core::mnemonic_to_seed(&mnemonic, "");
+                let words = mnemonic
+                    .to_string()
+                    .split_whitespace()
+                    .enumerate()
+                    .map(|(i, w)| format!("{}. {w}", i + 1))
+                    .collect();
+                WorkOutput::NewMnemonic { words, seed }
+            }
+            PendingWork::Encrypt { seed, pin, salt, nonce } => {
+                let enc = seed_lock::encrypt_seed_with_randomness(&seed, &pin, salt, nonce);
+                WorkOutput::Encrypted { seed, enc }
+            }
+            PendingWork::Decrypt { enc, pin } => WorkOutput::Decrypted(seed_lock::decrypt_seed(&enc, &pin)),
+            PendingWork::ValidateRecovery(mnemonic) => {
+                WorkOutput::Recovered { seed: corisco_crypto_core::mnemonic_to_seed(&mnemonic, "") }
+            }
+        };
+        log::info!("ui: pending work took {:?}", t0.elapsed());
+        output
     }
 }
 
@@ -202,13 +235,13 @@ pub fn run_with_spinner<T: Send + 'static>(
     stack_size: usize,
     work: impl FnOnce() -> T + Send + 'static,
 ) -> T {
-    if !worker::has_room_for(stack_size) {
-        let output = work();
-        log::info!("ui: ran inline, {} main task stack bytes never used", worker::unused_stack_bytes());
-        return output;
-    }
-    let handle = worker::spawn(stack_size, work);
-    while !handle.is_finished() {
+    let largest_before = worker::largest_internal_block();
+    let spawned = if worker::has_room_for(stack_size) { worker::spawn(stack_size, work) } else { Err(work) };
+    let worker = match spawned {
+        Ok(worker) => worker,
+        Err(work) => return run_inline(ui, window, display, power_button, work),
+    };
+    while !worker.is_finished() {
         slint::platform::update_timers_and_animations();
         platform::render_frame(window, display);
         if power_button.long_pressed() {
@@ -216,12 +249,37 @@ pub fn run_with_spinner<T: Send + 'static>(
         }
         esp_idf_svc::hal::delay::FreeRtos::delay_ms(20);
     }
-    handle.join().expect("crypto worker panicked")
+    let output = worker.join();
+    // Allocations that outlive the worker can pin its freed stack apart from the rest of its
+    // block, leaving too little contiguous RAM for a later BLE connection.
+    let largest_after = worker::largest_internal_block();
+    if largest_after < largest_before {
+        log::warn!("ui: largest internal block shrank from {largest_before} to {largest_after} across the worker");
+    }
+    output
 }
 
-/// Starts the slow part of a `Stage::Pending*` on the crypto worker, or returns the next stage
-/// directly when a fast check (storage load, checksum) already decides it.
-fn start_pending_work(ui: &AppWindow, stage: Stage, storage: &Storage) -> Result<JoinHandle<WorkOutput>, Stage> {
+fn run_inline<T>(
+    ui: &AppWindow,
+    window: &MinimalSoftwareWindow,
+    display: &Display,
+    power_button: &mut PowerButton,
+    work: impl FnOnce() -> T,
+) -> T {
+    log::warn!("ui: no crypto worker, running inline with the spinner and power button frozen");
+    platform::render_frame(window, display);
+    let output = work();
+    log::info!("ui: ran inline, {} main task stack bytes never used", worker::unused_stack_bytes());
+    // The button is level-polled, so a hold that started during the work still powers off here.
+    if power_button.long_pressed() {
+        power::power_off(ui, window, display, power_button);
+    }
+    output
+}
+
+/// Collects a `Stage::Pending*`'s inputs for the worker, or returns the next stage directly when a
+/// fast check (storage load, checksum) already decides it.
+fn prepare_pending_work(ui: &AppWindow, stage: Stage, storage: &Storage) -> Result<PendingWork, Stage> {
     match stage {
         Stage::PendingGenerateMnemonic { word_count } => {
             let mnemonic = if word_count >= 24 {
@@ -229,35 +287,13 @@ fn start_pending_work(ui: &AppWindow, stage: Stage, storage: &Storage) -> Result
             } else {
                 mnemonic_gen::generate_mnemonic_from_entropy(&rng::device_entropy_128())
             };
-            Ok(worker::spawn(CRYPTO_WORKER_STACK, move || {
-                let t0 = Instant::now();
-                let seed = corisco_crypto_core::mnemonic_to_seed(&mnemonic, "");
-                log::info!("ui: mnemonic_to_seed took {:?}", t0.elapsed());
-                let words = mnemonic
-                    .to_string()
-                    .split_whitespace()
-                    .enumerate()
-                    .map(|(i, w)| format!("{}. {w}", i + 1))
-                    .collect();
-                WorkOutput::NewMnemonic { words, seed }
-            }))
+            Ok(PendingWork::GenerateMnemonic(mnemonic))
         }
         Stage::PendingEncrypt { seed, pin } => {
-            let (salt, nonce) = (rng::random_salt_16(), rng::random_nonce_12());
-            Ok(worker::spawn(CRYPTO_WORKER_STACK, move || {
-                let t0 = Instant::now();
-                let enc = seed_lock::encrypt_seed_with_randomness(&seed, &pin, salt, nonce);
-                log::info!("ui: encrypt_seed_with_randomness took {:?}", t0.elapsed());
-                WorkOutput::Encrypted { seed, enc }
-            }))
+            Ok(PendingWork::Encrypt { seed, pin, salt: rng::random_salt_16(), nonce: rng::random_nonce_12() })
         }
         Stage::PendingDecrypt { pin } => match storage.load() {
-            Ok(Some(enc)) => Ok(worker::spawn(CRYPTO_WORKER_STACK, move || {
-                let t0 = Instant::now();
-                let result = seed_lock::decrypt_seed(&enc, &pin);
-                log::info!("ui: decrypt_seed took {:?}", t0.elapsed());
-                WorkOutput::Decrypted(result)
-            })),
+            Ok(Some(enc)) => Ok(PendingWork::Decrypt { enc, pin }),
             Ok(None) => {
                 log::error!("ui: Unlock reached with no stored seed blob");
                 ui.set_pin_error("No wallet found".into());
@@ -270,12 +306,7 @@ fn start_pending_work(ui: &AppWindow, stage: Stage, storage: &Storage) -> Result
             }
         },
         Stage::PendingValidateRecovery { words } => match mnemonic_gen::parse_mnemonic(&words) {
-            Ok(mnemonic) => Ok(worker::spawn(CRYPTO_WORKER_STACK, move || {
-                let t0 = Instant::now();
-                let seed = corisco_crypto_core::mnemonic_to_seed(&mnemonic, "");
-                log::info!("ui: mnemonic_to_seed (recovery) took {:?}", t0.elapsed());
-                WorkOutput::Recovered { seed }
-            })),
+            Ok(mnemonic) => Ok(PendingWork::ValidateRecovery(mnemonic)),
             Err(e) => {
                 // Every word is valid, so this is a checksum failure, which can't say which word
                 // is wrong: restart recovery.
@@ -525,7 +556,6 @@ pub fn run_onboarding_or_unlock(
     }
 
     let mut last_position = None;
-    let mut work: Option<JoinHandle<WorkOutput>> = None;
     loop {
         platform::dispatch_touch(window, touch, &mut last_position);
         slint::platform::update_timers_and_animations();
@@ -540,14 +570,6 @@ pub fn run_onboarding_or_unlock(
             power::power_off(&ui, window, display, power_button);
         }
 
-        if work.as_ref().is_some_and(JoinHandle::is_finished) {
-            let output = work.take().and_then(|handle| handle.join().ok()).expect("crypto worker panicked");
-            let mut flow = flow.borrow_mut();
-            flow.stage = finish_pending_work(&ui, output, &storage);
-            sync_ui(&ui, &flow);
-        }
-
-        // Only once the "Working..." frame has been drawn.
         let is_pending = matches!(
             flow.borrow().stage,
             Stage::PendingGenerateMnemonic { .. }
@@ -556,16 +578,23 @@ pub fn run_onboarding_or_unlock(
                 | Stage::PendingValidateRecovery { .. }
         );
         if is_pending {
-            let mut flow = flow.borrow_mut();
-            let taken = std::mem::replace(&mut flow.stage, Stage::Working);
-            flow.pin_buf.clear();
-            match start_pending_work(&ui, taken, &storage) {
-                Ok(handle) => work = Some(handle),
-                Err(next) => {
-                    flow.stage = next;
-                    sync_ui(&ui, &flow);
+            let prepared = {
+                let mut flow = flow.borrow_mut();
+                flow.pin_buf.clear();
+                let stage = std::mem::replace(&mut flow.stage, Stage::Welcome);
+                prepare_pending_work(&ui, stage, &storage)
+            };
+            let next = match prepared {
+                Ok(job) => {
+                    let output =
+                        run_with_spinner(&ui, window, display, power_button, CRYPTO_WORKER_STACK, move || job.run());
+                    finish_pending_work(&ui, output, &storage)
                 }
-            }
+                Err(next) => next,
+            };
+            let mut flow = flow.borrow_mut();
+            flow.stage = next;
+            sync_ui(&ui, &flow);
         }
 
         esp_idf_svc::hal::delay::FreeRtos::delay_ms(20);

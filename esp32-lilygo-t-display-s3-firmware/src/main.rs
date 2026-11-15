@@ -246,7 +246,7 @@ fn main() -> anyhow::Result<()> {
                 slint::platform::update_timers_and_animations();
                 platform::render_frame(&window, display);
 
-                // After the render, so the "Wiping..." frame is drawn before restart().
+                // After the render, so the "Wiping" frame is drawn before restart().
                 if factory_reset_pending.get() {
                     if let Err(e) = storage.wipe() {
                         log::error!("main: storage.wipe failed during factory reset: {e:?}");

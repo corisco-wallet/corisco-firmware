@@ -17,6 +17,9 @@ esp-idf-sys = { workspace = true, features = ["binstart"] }
 log = { workspace = true }
 
 hex = { workspace = true }
+zeroize = { workspace = true }
+# Same spec as crypto-core, so it unifies with the copy behind its `Mnemonic`.
+bip39 = { version = "2", default-features = false, features = ["std"] }
 sha2 = { workspace = true }
 anyhow = { workspace = true }
 
