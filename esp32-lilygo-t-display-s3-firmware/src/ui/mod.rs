@@ -147,15 +147,7 @@ fn sync_ui(ui: &AppWindow, flow: &FlowInner) {
             ui.set_pin_entered_count(flow.pin_buf.len() as i32);
             ui.set_screen(2);
         }
-        Stage::Done(seed) => {
-            let pubkey_short = match corisco_crypto_core::SparkKeyRoots::from_seed(seed, 0) {
-                Ok(roots) => {
-                    let full = hex::encode(roots.identity.public_key_compressed());
-                    format!("{}...{}", &full[..8], &full[full.len() - 8..])
-                }
-                Err(_) => String::new(),
-            };
-            ui.set_identity_pubkey_short(pubkey_short.into());
+        Stage::Done(_) => {
             // main.rs switches to Home once its setup is done and the loop is polling touch.
             ui.set_working_label("Loading".into());
             ui.set_screen(6);

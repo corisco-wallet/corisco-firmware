@@ -6,6 +6,10 @@ resolver = "2"
 rust-version = "1.77"
 license = "MIT OR Apache-2.0"
 
+[features]
+# Runs the SHA-512 benchmark and the FROST signing self-test after every unlock (~14s on device).
+boot-selftest = []
+
 [dependencies]
 firmware-core = { path = "../firmware-core" }
 

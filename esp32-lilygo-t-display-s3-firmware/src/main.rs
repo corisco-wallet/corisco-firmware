@@ -8,7 +8,7 @@ mod touch;
 mod ui;
 mod worker;
 
-use firmware_core::{ble, platform, selftest, storage};
+use firmware_core::{ble, platform, storage};
 
 // `AppWindow`, generated from src/ui/app.slint by build.rs.
 slint::include_modules!();
@@ -19,8 +19,8 @@ use log::info;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 
-/// ~2.4x the measured peak (~20KB) of key derivation + FROST self-test, and small enough to fit
-/// the ~76KB largest internal block left at this point (128KB never did).
+/// Sized for `boot-selftest`: ~2.4x the measured peak (~20KB) of key derivation + FROST self-test,
+/// and fits the ~76KB largest internal block left at this point (128KB never did).
 const BOOT_WORKER_STACK: usize = 48 * 1024;
 
 fn main() -> anyhow::Result<()> {
@@ -80,11 +80,19 @@ fn main() -> anyhow::Result<()> {
                 let roots = ui::run_with_spinner(&ui, &w, display, &mut power_button, BOOT_WORKER_STACK, move || {
                     let roots = corisco_crypto_core::SparkKeyRoots::from_seed(&seed, 0)
                         .expect("key derivation should not fail for this seed");
-                    selftest::bench_sha512_single_block();
-                    selftest::frost_self_test(&roots).expect("FROST self-test should produce a valid signature");
+                    #[cfg(feature = "boot-selftest")]
+                    {
+                        firmware_core::selftest::bench_sha512_single_block();
+                        firmware_core::selftest::frost_self_test(&roots)
+                            .expect("FROST self-test should produce a valid signature");
+                    }
                     roots
                 });
-                info!("ui: flow complete, identity pubkey: {}", hex::encode(roots.identity.public_key_compressed()));
+                let identity = hex::encode(roots.identity.public_key_compressed());
+                info!("ui: flow complete, identity pubkey: {identity}");
+                ui.set_identity_pubkey_short(
+                    format!("{}...{}", &identity[..8], &identity[identity.len() - 8..]).into(),
+                );
                 app_ui = Some(ui);
                 Some(roots)
             }
