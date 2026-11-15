@@ -230,7 +230,7 @@ export component AppWindow inherits Window {
 
     // 0=Welcome 1=Mnemonic 2=Pin 3=Home 4=SignConfirm 5=Wiped 6=Working
     // 7=Pairing 8=WordCount 9=WordEntry 10=FactoryResetConfirm 11=Settings
-    // 12=ConfirmationBetaNotice
+    // 12=ConfirmationBetaNotice 13=PowerOff
     in-out property <int> screen: 0;
 
     // SecurityIOCap::DisplayOnly: the passkey must be shown here (ble.rs's on_passkey_request).
@@ -796,6 +796,18 @@ export component AppWindow inherits Window {
         PrimaryButton {
             text: "OK";
             clicked => { root.confirmation-beta-ok-pressed(); }
+        }
+    }
+
+    if root.screen == 13: VerticalLayout {
+        alignment: center;
+        padding: 12px;
+        Text {
+            text: "Release button to power off";
+            color: Theme.text-primary;
+            font-size: 20px;
+            horizontal-alignment: center;
+            wrap: word-wrap;
         }
     }
 }

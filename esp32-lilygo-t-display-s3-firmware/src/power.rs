@@ -78,10 +78,9 @@ pub fn on_boot(button: &PowerButton) {
     }
 }
 
-/// Shows "Powering off...", waits for the button to be released, then sleeps.
+/// Asks for the button to be released, waits for it, then sleeps.
 pub fn power_off(ui: &AppWindow, window: &MinimalSoftwareWindow, display: &Display, button: &PowerButton) -> ! {
-    ui.set_working_label("Powering off...".into());
-    ui.set_screen(6);
+    ui.set_screen(13);
     platform::render_frame(window, display);
     button.wait_for_release();
     if let Err(e) = display.sleep() {
