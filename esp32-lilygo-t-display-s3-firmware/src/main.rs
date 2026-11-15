@@ -6,8 +6,9 @@ mod display;
 mod power;
 mod touch;
 mod ui;
+mod worker;
 
-use firmware_core::{ble, platform, selftest, storage};
+use firmware_core::{ble, platform, storage};
 
 // `AppWindow`, generated from src/ui/app.slint by build.rs.
 slint::include_modules!();
@@ -17,6 +18,10 @@ use esp_idf_svc::log::EspLogger;
 use log::info;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
+
+/// Sized for `boot-selftest`: ~2.4x the measured peak (~20KB) of key derivation + FROST self-test,
+/// and fits the ~76KB largest internal block left at this point (128KB never did).
+const BOOT_WORKER_STACK: usize = 48 * 1024;
 
 fn main() -> anyhow::Result<()> {
     esp_idf_svc::sys::link_patches();
@@ -72,9 +77,22 @@ fn main() -> anyhow::Result<()> {
             already_provisioned,
         ) {
             Ok((ui, seed)) => {
-                let roots = corisco_crypto_core::SparkKeyRoots::from_seed(&seed, 0)
-                    .expect("key derivation should not fail for this seed");
-                info!("ui: flow complete, identity pubkey: {}", hex::encode(roots.identity.public_key_compressed()));
+                let roots = ui::run_with_spinner(&ui, &w, display, &mut power_button, BOOT_WORKER_STACK, move || {
+                    let roots = corisco_crypto_core::SparkKeyRoots::from_seed(&seed, 0)
+                        .expect("key derivation should not fail for this seed");
+                    #[cfg(feature = "boot-selftest")]
+                    {
+                        firmware_core::selftest::bench_sha512_single_block();
+                        firmware_core::selftest::frost_self_test(&roots)
+                            .expect("FROST self-test should produce a valid signature");
+                    }
+                    roots
+                });
+                let identity = hex::encode(roots.identity.public_key_compressed());
+                info!("ui: flow complete, identity pubkey: {identity}");
+                ui.set_identity_pubkey_short(
+                    format!("{}...{}", &identity[..8], &identity[identity.len() - 8..]).into(),
+                );
                 app_ui = Some(ui);
                 Some(roots)
             }
@@ -95,10 +113,6 @@ fn main() -> anyhow::Result<()> {
         log::error!("no onboarded seed available (display/touch unavailable, or the onboarding/unlock flow failed) -- halting rather than signing with a fake key");
         halt(&mut power_button);
     };
-
-    selftest::bench_sha512_single_block();
-
-    selftest::frost_self_test(&roots).expect("FROST self-test should produce a valid signature");
 
     info!(
         "heap before BLE spawn: free={} largest_free_block={}",
@@ -181,7 +195,7 @@ fn main() -> anyhow::Result<()> {
                 ui.on_factory_reset_confirm_pressed(move || {
                     let Some(ui) = ui_weak.upgrade() else { return };
                     factory_reset_pending.set(true);
-                    ui.set_working_label("Wiping...".into());
+                    ui.set_working_label("Wiping".into());
                     ui.set_screen(6);
                 });
             }
@@ -240,7 +254,7 @@ fn main() -> anyhow::Result<()> {
                 slint::platform::update_timers_and_animations();
                 platform::render_frame(&window, display);
 
-                // After the render, so the "Wiping..." frame is drawn before restart().
+                // After the render, so the "Wiping" frame is drawn before restart().
                 if factory_reset_pending.get() {
                     if let Err(e) = storage.wipe() {
                         log::error!("main: storage.wipe failed during factory reset: {e:?}");

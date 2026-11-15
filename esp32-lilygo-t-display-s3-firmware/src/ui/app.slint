@@ -107,6 +107,29 @@ component Logo {
     }
 }
 
+// The software renderer can't rotate images, so this cycles pre-rotated frames
+// spanning one tooth (the gear has 45° symmetry).
+component Spinner {
+    in property <brush> color: Theme.text-primary;
+    in property <length> size: 64px;
+    property <[image]> frames: [
+        @image-url("./icons/gear-0.svg"),
+        @image-url("./icons/gear-1.svg"),
+        @image-url("./icons/gear-2.svg"),
+        @image-url("./icons/gear-3.svg"),
+        @image-url("./icons/gear-4.svg"),
+        @image-url("./icons/gear-5.svg"),
+    ];
+    property <int> frame: Math.mod(Math.floor(animation-tick() / 60ms), root.frames.length);
+    width: root.size;
+    height: root.size;
+    Icon {
+        source: root.frames[root.frame];
+        color: root.color;
+        size: root.size;
+    }
+}
+
 // Battery outline whose fill tracks `percent`, with a bolt while charging.
 component BatteryIndicator inherits HorizontalLayout {
     in property <int> percent;
@@ -207,14 +230,14 @@ export component AppWindow inherits Window {
 
     // 0=Welcome 1=Mnemonic 2=Pin 3=Home 4=SignConfirm 5=Wiped 6=Working
     // 7=Pairing 8=WordCount 9=WordEntry 10=FactoryResetConfirm 11=Settings
-    // 12=ConfirmationBetaNotice
+    // 12=ConfirmationBetaNotice 13=PowerOff
     in-out property <int> screen: 0;
 
     // SecurityIOCap::DisplayOnly: the passkey must be shown here (ble.rs's on_passkey_request).
     in property <string> pairing-passkey: "";
 
     // Shown for at least one real frame before slow crypto calls, which block the render loop.
-    in property <string> working-label: "Working...";
+    in property <string> working-label: "Working";
 
     // Paginated at 12 words/page rather than scrollable: a missed word here is
     // a much worse failure than on any other screen.
@@ -534,9 +557,14 @@ export component AppWindow inherits Window {
     if root.screen == 6: VerticalLayout {
         alignment: center;
         padding: 12px;
+        spacing: 16px;
+        HorizontalLayout {
+            alignment: center;
+            Spinner { }
+        }
         Text {
             text: root.working-label;
-            color: Theme.accent;
+            color: Theme.text-primary;
             font-size: 20px;
             horizontal-alignment: center;
         }
@@ -768,6 +796,18 @@ export component AppWindow inherits Window {
         PrimaryButton {
             text: "OK";
             clicked => { root.confirmation-beta-ok-pressed(); }
+        }
+    }
+
+    if root.screen == 13: VerticalLayout {
+        alignment: center;
+        padding: 12px;
+        Text {
+            text: "Release button to power off";
+            color: Theme.text-primary;
+            font-size: 20px;
+            horizontal-alignment: center;
+            wrap: word-wrap;
         }
     }
 }

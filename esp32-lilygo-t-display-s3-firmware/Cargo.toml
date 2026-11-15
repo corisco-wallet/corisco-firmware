@@ -6,6 +6,10 @@ resolver = "2"
 rust-version = "1.77"
 license = "MIT OR Apache-2.0"
 
+[features]
+# Runs the SHA-512 benchmark and the FROST signing self-test after every unlock (~14s on device).
+boot-selftest = []
+
 [dependencies]
 firmware-core = { path = "../firmware-core" }
 
@@ -17,6 +21,9 @@ esp-idf-sys = { workspace = true, features = ["binstart"] }
 log = { workspace = true }
 
 hex = { workspace = true }
+zeroize = { workspace = true }
+# Same spec as crypto-core, so it unifies with the copy behind its `Mnemonic`.
+bip39 = { version = "2", default-features = false, features = ["std"] }
 sha2 = { workspace = true }
 anyhow = { workspace = true }
 
